@@ -10,6 +10,9 @@
 
     <form method="POST" action="{{ route('reagents.update', $reagent) }}" class="card">
         @method('PUT')
+        @if ($errors->any())
+            <div class="alert alert--error" role="alert">Saqlanmadi: qizil bilan belgilangan maydonlarni to‘g‘rilang.</div>
+        @endif
         @include('reagents._form')
 
         <div class="form-actions">

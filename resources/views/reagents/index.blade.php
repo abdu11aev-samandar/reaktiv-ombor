@@ -35,16 +35,21 @@
     </form>
 
     <nav class="filters" aria-label="Yaroqlilik muddati bo‘yicha filtr">
-        <a href="{{ $urlWith(['status' => null]) }}" @class(['chip', 'chip--active' => $status === null])>
+        <a href="{{ $urlWith(['status' => null]) }}" @class(['chip', 'chip--active' => $status === null]) @if ($status === null) aria-current="true" @endif>
             Hammasi <span class="chip__count">{{ $total }}</span>
         </a>
         @foreach (ExpiryStatus::ordered() as $option)
-            <a href="{{ $urlWith(['status' => $option->value]) }}" @class(['chip', 'chip--active' => $status === $option])>
+            <a href="{{ $urlWith(['status' => $option->value]) }}" @class(['chip', 'chip--active' => $status === $option]) @if ($status === $option) aria-current="true" @endif>
                 <span class="dot dot--{{ $option->value }}" aria-hidden="true"></span>
                 {{ $option->label() }}
                 <span class="chip__count">{{ $counts[$option->value] ?? 0 }}</span>
             </a>
         @endforeach
+
+        <a href="{{ $urlWith(['sort' => $sortByExpiry ? null : 'expiry']) }}" @class(['chip', 'chip--sort', 'chip--active' => $sortByExpiry]) @if ($sortByExpiry) aria-current="true" @endif>
+            <span aria-hidden="true">{{ $sortByExpiry ? '▲' : '↕' }}</span>
+            Muddati yaqinlari birinchi
+        </a>
     </nav>
 
     @if ($reagents->isEmpty())
@@ -65,7 +70,7 @@
                         <th>Reaktiv nomi</th>
                         <th>Kelgan vaqt</th>
                         <th>Berilgan miqdor</th>
-                        <th>
+                        <th @if ($sortByExpiry) aria-sort="ascending" @endif>
                             <a href="{{ $urlWith(['sort' => $sortByExpiry ? null : 'expiry']) }}" class="sort-link"
                                title="{{ $sortByExpiry ? 'Kiritilgan tartibda ko‘rsatish' : 'Muddati yaqinlari birinchi' }}">
                                 Yaroqlilik muddati <span aria-hidden="true">{{ $sortByExpiry ? '▲' : '↕' }}</span>

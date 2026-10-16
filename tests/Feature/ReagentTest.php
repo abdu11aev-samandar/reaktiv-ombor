@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\Reagent;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Route;
 use Tests\TestCase;
 
 class ReagentTest extends TestCase
@@ -161,8 +162,61 @@ class ReagentTest extends TestCase
 
         $this->get(route('reagents.edit', $reagent))
             ->assertOk()
-            ->assertSee('value="Kaliy gidroksid"', false)
-            ->assertSee('value="500"', false);
+            ->assertSee('<input type="text" id="name" name="name" value="Kaliy gidroksid"', false)
+            ->assertSee('value="'.$reagent->received_at->format('Y-m-d').'"', false)
+            ->assertSee('value="'.$reagent->expires_at->format('Y-m-d').'"', false)
+            ->assertSee('value="500" placeholder="masalan: 500"', false)
+            ->assertSee('<option value="gr" selected>', false);
+    }
+
+    public function test_form_keeps_typed_values_after_validation_error(): void
+    {
+        $this->from(route('reagents.create'))
+            ->post(route('reagents.store'), $this->validData(['name' => '', 'given_amount' => '2,5', 'unit' => 'ml']));
+
+        $this->get(route('reagents.create'))
+            ->assertOk()
+            ->assertSee('Saqlanmadi: qizil bilan belgilangan maydonlarni to‘g‘rilang.')
+            ->assertSee('value="2,5" placeholder="masalan: 500"', false)
+            ->assertSee('<option value="ml" selected>', false);
+    }
+
+    public function test_array_values_in_form_give_validation_errors_not_a_crash(): void
+    {
+        $this->from(route('reagents.create'))
+            ->post(route('reagents.store'), $this->validData(['name' => ['x'], 'received_at' => ['2026-01-01'], 'unit' => ['gr']]))
+            ->assertRedirect(route('reagents.create'))
+            ->assertSessionHasErrors(['name', 'received_at', 'unit']);
+
+        $this->get(route('reagents.create'))->assertOk();
+        $this->assertDatabaseCount('reagents', 0);
+    }
+
+    public function test_array_query_parameters_are_ignored(): void
+    {
+        Reagent::factory()->create(['name' => 'Ammiak']);
+
+        $this->get('/reaktivlar?status[]=red&q[]=x&sort[]=expiry')
+            ->assertOk()
+            ->assertSee('Ammiak');
+    }
+
+    public function test_expired_session_on_save_keeps_typed_values(): void
+    {
+        Route::post('/_test/eskirgan', fn () => abort(419))->middleware('web');
+
+        $this->from(route('reagents.create'))
+            ->post('/_test/eskirgan', ['name' => 'Xloroform', '_token' => 'eski'])
+            ->assertRedirect(route('reagents.create'))
+            ->assertSessionHas('error')
+            ->assertSessionHasInput('name', 'Xloroform');
+    }
+
+    public function test_error_pages_are_in_uzbek(): void
+    {
+        $this->get('/reaktivlar/999/tahrirlash')
+            ->assertNotFound()
+            ->assertSee('Sahifa topilmadi');
     }
 
     public function test_reagent_can_be_updated(): void
@@ -207,6 +261,30 @@ class ReagentTest extends TestCase
             ->assertDontSee('Ammiak');
     }
 
+    public function test_search_ignores_case_in_cyrillic_and_apostrophe_style(): void
+    {
+        Reagent::factory()->create(['name' => 'Хлороформ']);
+        Reagent::factory()->create(['name' => 'Bo‘yoq eritmasi']);
+        Reagent::factory()->create(['name' => 'Ammiak']);
+
+        $this->get(route('reagents.index', ['q' => 'хлоро']))
+            ->assertSee('Хлороформ')
+            ->assertDontSee('Ammiak');
+
+        $this->get(route('reagents.index', ['q' => "bo'yoq"]))
+            ->assertSee('Bo‘yoq eritmasi')
+            ->assertDontSee('Ammiak');
+    }
+
+    public function test_search_treats_percent_and_underscore_literally(): void
+    {
+        Reagent::factory()->create(['name' => 'Ammiak']);
+
+        $this->get(route('reagents.index', ['q' => '%']))
+            ->assertDontSee('>Ammiak<', false)
+            ->assertSee('Bu filtr bo‘yicha reaktiv topilmadi');
+    }
+
     public function test_list_can_be_sorted_by_expiry(): void
     {
         Reagent::factory()->create(['name' => 'Kech', 'expires_at' => '2028-01-01']);
@@ -215,6 +293,7 @@ class ReagentTest extends TestCase
 
         $this->get(route('reagents.index', ['sort' => 'expiry']))
             ->assertOk()
+            ->assertSee('aria-sort="ascending"', false)
             ->assertSeeInOrder(['>Erta<', '>Orta<', '>Kech<'], false);
     }
 }

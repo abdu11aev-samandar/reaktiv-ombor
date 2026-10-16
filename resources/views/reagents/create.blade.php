@@ -9,6 +9,9 @@
     </div>
 
     <form method="POST" action="{{ route('reagents.store') }}" class="card">
+        @if ($errors->any())
+            <div class="alert alert--error" role="alert">Saqlanmadi: qizil bilan belgilangan maydonlarni to‘g‘rilang.</div>
+        @endif
         @include('reagents._form')
 
         <div class="form-actions">

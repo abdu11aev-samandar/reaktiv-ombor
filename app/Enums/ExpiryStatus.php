@@ -8,9 +8,9 @@ use Illuminate\Support\Carbon;
 /**
  * Reaktivning yaroqlilik muddati bo‘yicha holati (rangi).
  *
- *  - 3 oy va undan ko‘p qolgan       → yashil
- *  - 1 oydan 3 oygacha qolgan        → sariq
- *  - 1 oydan kam qolgan yoki o‘tgan  → qizil
+ *  - 3 oydan ko‘p qolgan                  → yashil
+ *  - 1 oydan 3 oygacha (ikkalasi ham) qolgan → sariq
+ *  - 1 oydan kam qolgan yoki o‘tgan        → qizil
  */
 enum ExpiryStatus: string
 {
@@ -19,7 +19,7 @@ enum ExpiryStatus: string
     case Red = 'red';
 
     /** Shuncha oydan ko‘p qolgan bo‘lsa — yashil. */
-    public const GREEN_FROM_MONTHS = 3;
+    public const GREEN_AFTER_MONTHS = 3;
 
     /** Shuncha oydan kam qolgan bo‘lsa — qizil. */
     public const RED_BELOW_MONTHS = 1;
@@ -34,7 +34,7 @@ enum ExpiryStatus: string
             return self::Red;
         }
 
-        if ($expiresAt->lt($today->copy()->addMonthsNoOverflow(self::GREEN_FROM_MONTHS))) {
+        if ($expiresAt->lte($today->copy()->addMonthsNoOverflow(self::GREEN_AFTER_MONTHS))) {
             return self::Yellow;
         }
 

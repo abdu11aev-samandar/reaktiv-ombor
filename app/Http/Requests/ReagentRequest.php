@@ -15,10 +15,17 @@ class ReagentRequest extends FormRequest
 
     /**
      * "2,5" kabi vergulli sonlarni "2.5" ga aylantiradi.
+     * Massiv yuborilgan maydonlar bo‘sh deb hisoblanadi (500 xato o‘rniga "kiritilishi shart").
      */
     protected function prepareForValidation(): void
     {
         $normalized = [];
+
+        foreach (['name', 'received_at', 'given_amount', 'unit', 'expires_at', 'stock_amount'] as $field) {
+            if (is_array($this->input($field))) {
+                $normalized[$field] = null;
+            }
+        }
 
         foreach (['given_amount', 'stock_amount'] as $field) {
             $value = $this->input($field);

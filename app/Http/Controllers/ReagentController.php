@@ -14,14 +14,21 @@ class ReagentController extends Controller
 {
     public function index(Request $request): View
     {
-        $search = trim((string) $request->query('q', ''));
-        $status = ExpiryStatus::tryFrom((string) $request->query('status', ''));
+        // ?q[]=... kabi massivlar e’tiborsiz qoldiriladi (500 xato bermasligi uchun).
+        $search = is_string($q = $request->query('q')) ? mb_substr(trim($q), 0, 255) : '';
+        $status = is_string($s = $request->query('status')) ? ExpiryStatus::tryFrom($s) : null;
         $sortByExpiry = $request->query('sort') === 'expiry';
 
+        // Qidiruv PHP’da: kirill harflarida ham katta-kichik harf farqlanmaydi,
+        // % va _ oddiy belgi, o‘ / o' / o’ esa bir xil hisoblanadi.
+        $needle = self::searchKey($search);
+
         $reagents = Reagent::query()
-            ->when($search !== '', fn ($query) => $query->where('name', 'like', '%'.$search.'%'))
             ->orderBy('id')
-            ->get();
+            ->get()
+            ->when($needle !== '', fn ($items) => $items->filter(
+                fn (Reagent $reagent) => str_contains(self::searchKey($reagent->name), $needle)
+            ));
 
         $counts = $reagents->countBy(fn (Reagent $reagent) => $reagent->expiryStatus()->value);
 
@@ -85,6 +92,11 @@ class ReagentController extends Controller
         $reagent->delete();
 
         return to_route('reagents.index')->with('success', '«'.$reagent->name.'» o‘chirildi.');
+    }
+
+    private static function searchKey(string $value): string
+    {
+        return mb_strtolower(str_replace(["'", '`', '’', 'ʻ', 'ʼ'], '‘', $value));
     }
 
     /**
