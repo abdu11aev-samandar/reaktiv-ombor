@@ -1,0 +1,550 @@
+/* Reaktivlar hisobi — build talab qilmaydigan oddiy CSS. */
+
+:root {
+    --bg: #f4f6f9;
+    --surface: #ffffff;
+    --text: #1f2937;
+    --muted: #6b7280;
+    --border: #e2e6ec;
+    --primary: #1d4ed8;
+    --primary-hover: #1e40af;
+    --danger: #b91c1c;
+
+    --green: #15803d;
+    --green-soft: #dcfce7;
+    --yellow: #facc15;
+    --yellow-text: #422006;
+    --yellow-soft: #fef9c3;
+    --red: #dc2626;
+    --red-soft: #fee2e2;
+    --gray-soft: #eef0f3;
+
+    --radius: 10px;
+    color-scheme: light;
+}
+
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+}
+
+a {
+    color: var(--primary);
+}
+
+h1 {
+    margin: 0;
+    font-size: 1.5rem;
+    line-height: 1.2;
+}
+
+.container {
+    width: 100%;
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 0 16px;
+}
+
+main.container {
+    padding-top: 24px;
+    padding-bottom: 48px;
+}
+
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+}
+
+/* ---------- Topbar ---------- */
+
+.topbar {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+}
+
+.topbar__inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-height: 56px;
+}
+
+.brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text);
+    font-weight: 700;
+    font-size: 1.1rem;
+    text-decoration: none;
+}
+
+.brand__icon {
+    font-size: 1.3rem;
+}
+
+.topbar__date {
+    color: var(--muted);
+    font-size: .9rem;
+}
+
+/* ---------- Page head, toolbar ---------- */
+
+.page-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 20px;
+}
+
+.toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.toolbar .input {
+    flex: 1 1 240px;
+    max-width: 420px;
+}
+
+/* ---------- Buttons, inputs ---------- */
+
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-height: 40px;
+    padding: 8px 16px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface);
+    color: var(--text);
+    font: inherit;
+    font-weight: 600;
+    text-decoration: none;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.btn:hover {
+    background: var(--gray-soft);
+}
+
+.btn--primary {
+    border-color: var(--primary);
+    background: var(--primary);
+    color: #fff;
+}
+
+.btn--primary:hover {
+    border-color: var(--primary-hover);
+    background: var(--primary-hover);
+}
+
+.btn--ghost {
+    border-color: transparent;
+    background: transparent;
+    color: var(--primary);
+}
+
+.btn--danger {
+    color: var(--danger);
+}
+
+.btn--danger:hover {
+    border-color: var(--danger);
+    background: var(--red-soft);
+}
+
+.btn--small {
+    min-height: 32px;
+    padding: 4px 10px;
+    font-size: .875rem;
+}
+
+.input {
+    width: 100%;
+    min-height: 40px;
+    padding: 8px 12px;
+    border: 1px solid #cbd2db;
+    border-radius: 8px;
+    background: #fff;
+    color: var(--text);
+    font: inherit;
+}
+
+.input:focus,
+.btn:focus-visible,
+.chip:focus-visible,
+.sort-link:focus-visible {
+    outline: 3px solid rgba(29, 78, 216, .35);
+    outline-offset: 1px;
+    border-color: var(--primary);
+}
+
+.input[aria-invalid="true"] {
+    border-color: var(--danger);
+}
+
+/* ---------- Alerts ---------- */
+
+.alert {
+    margin-bottom: 16px;
+    padding: 12px 16px;
+    border-radius: var(--radius);
+}
+
+.alert--success {
+    border: 1px solid #86efac;
+    background: var(--green-soft);
+    color: #14532d;
+}
+
+/* ---------- Filter chips (legend) ---------- */
+
+.filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 16px;
+}
+
+.chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--text);
+    font-size: .9rem;
+    text-decoration: none;
+}
+
+.chip:hover {
+    background: var(--gray-soft);
+}
+
+.chip--active {
+    border-color: var(--text);
+    box-shadow: inset 0 0 0 1px var(--text);
+    font-weight: 600;
+}
+
+.chip__count {
+    min-width: 22px;
+    padding: 0 6px;
+    border-radius: 999px;
+    background: var(--gray-soft);
+    font-size: .8rem;
+    text-align: center;
+}
+
+.dot {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    vertical-align: -1px;
+}
+
+.dot--green { background: var(--green); }
+.dot--yellow { background: var(--yellow); box-shadow: inset 0 0 0 1px #ca8a04; }
+.dot--red { background: var(--red); }
+
+/* ---------- Table ---------- */
+
+.table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+}
+
+.table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.table th,
+.table td {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    text-align: left;
+    vertical-align: middle;
+}
+
+.table th {
+    background: #f8fafc;
+    color: var(--muted);
+    font-size: .8rem;
+    font-weight: 700;
+    letter-spacing: .02em;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+.table tbody tr:last-child td {
+    border-bottom: 0;
+}
+
+.table tbody tr:hover {
+    background: #fafbfc;
+}
+
+.col-num {
+    width: 48px;
+    color: var(--muted);
+    text-align: center !important;
+}
+
+.col-actions {
+    width: 1%;
+    white-space: nowrap;
+    text-align: right !important;
+}
+
+.col-actions form {
+    display: inline;
+}
+
+.sort-link {
+    color: inherit;
+    text-decoration: none;
+}
+
+.sort-link:hover {
+    color: var(--primary);
+}
+
+/* Reaktiv nomi — muddatga qarab rang */
+.name {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-weight: 600;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+}
+
+.name--green {
+    background: var(--green);
+    color: #fff;
+}
+
+.name--yellow {
+    background: var(--yellow);
+    color: var(--yellow-text);
+}
+
+.name--red {
+    background: var(--red);
+    color: #fff;
+}
+
+
+.hint {
+    display: block;
+    font-size: .8rem;
+}
+
+.hint--green { color: var(--green); }
+.hint--yellow { color: #a16207; }
+.hint--red { color: var(--red); font-weight: 600; }
+
+.empty {
+    padding: 48px 16px;
+    border: 1px dashed #cbd2db;
+    border-radius: var(--radius);
+    background: var(--surface);
+    color: var(--muted);
+    text-align: center;
+}
+
+.empty p {
+    margin: 0 0 16px;
+}
+
+/* ---------- Form ---------- */
+
+.card {
+    padding: 24px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+}
+
+.form-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px 20px;
+}
+
+.field--wide {
+    grid-column: 1 / -1;
+}
+
+.field__label {
+    display: block;
+    margin-bottom: 6px;
+    font-weight: 600;
+}
+
+.req {
+    color: var(--danger);
+}
+
+.field__error {
+    margin: 6px 0 0;
+    color: var(--danger);
+    font-size: .875rem;
+}
+
+.form-note {
+    margin: 20px 0 0;
+    color: var(--muted);
+    font-size: .9rem;
+}
+
+.form-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 24px;
+}
+
+/* ---------- Telefon: jadval kartochka ko‘rinishida ---------- */
+
+@media (max-width: 760px) {
+    h1 {
+        font-size: 1.25rem;
+    }
+
+    .topbar__date {
+        display: none;
+    }
+
+    .form-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .card {
+        padding: 16px;
+    }
+
+    .table-wrap {
+        overflow: visible;
+        border: 0;
+        background: transparent;
+    }
+
+    .table thead {
+        display: none;
+    }
+
+    .table,
+    .table tbody,
+    .table tr,
+    .table td {
+        display: block;
+        width: 100%;
+    }
+
+    .table tr {
+        margin-bottom: 12px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        background: var(--surface);
+        overflow: hidden;
+    }
+
+    .table td {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 8px 14px;
+        text-align: right;
+    }
+
+    .table td::before {
+        content: attr(data-label);
+        flex-shrink: 0;
+        color: var(--muted);
+        font-size: .85rem;
+        text-align: left;
+    }
+
+    .table td.col-num {
+        display: none;
+    }
+
+    .table td.col-name {
+        justify-content: flex-start;
+        padding: 12px 14px;
+        background: #f8fafc;
+        text-align: left;
+    }
+
+    .table td.col-name::before {
+        content: none;
+    }
+
+    .table td.col-name .name {
+        font-size: 1.05rem;
+    }
+
+    .table td.col-actions {
+        justify-content: flex-end;
+        background: #f8fafc;
+        text-align: right !important;
+    }
+
+    .table td.col-actions::before {
+        content: none;
+    }
+}
+
+/* ---------- Chop etish ---------- */
+
+@media print {
+    body {
+        background: #fff;
+    }
+
+    .topbar,
+    .toolbar,
+    .filters,
+    .page-head .btn,
+    .col-actions,
+    .alert {
+        display: none !important;
+    }
+
+    .table-wrap {
+        border: 0;
+    }
+
+    .table th,
+    .table td {
+        border: 1px solid #999;
+    }
+}
