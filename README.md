@@ -78,6 +78,46 @@ Veb-server foydalanuvchisi `storage/`, `bootstrap/cache/` va (SQLite bo‘lsa) `
 
 > **Diqqat:** ilovada login yo‘q. Uni internetga ochiq joylashtirsangiz, kirishni cheklang (masalan, veb-server darajasida parol yoki Laravel autentifikatsiyasi).
 
+## Android ilova
+
+`android/` papkada internetsiz ishlaydigan Android ilova bor (Kotlin, Jetpack Compose). Ma’lumotlar telefonning o‘zida saqlanadi, server kerak emas.
+
+- Ro‘yxat, ranglar, filtr, qidiruv, saralash va validatsiya qoidalari Laravel ilovadagi bilan bir xil
+- Sanalar kalendardan tanlanadi, barcha maydonlar majburiy
+- **Eslatmalar:** har kuni ertalab soat 9:00 da tekshiradi; reaktiv sariq yoki qizilga o‘tsa yoki muddati tugasa — telefonga xabar keladi (bir bosqich haqida bir marta)
+- **Zaxira:** menyu → «Zaxira nusxa olish» (JSON fayl) va «Zaxiradan tiklash». Android’ning Google zaxirasiga ham kiradi
+- Android 7.0 va undan yangi telefonlarda ishlaydi
+
+### APK yig‘ish
+
+Talablar: JDK 17+, Android SDK (`local.properties` faylida `sdk.dir=...`).
+
+```bash
+cd android
+./gradlew testDebugUnitTest assembleRelease
+# tayyor fayl: android/app/build/outputs/apk/release/app-release.apk
+```
+
+Har push’da GitHub Actions («Android» workflow) testlarni o‘tkazadi va APK’ni yig‘adi — uni Actions sahifasidagi **reaktivlar-apk** artefaktidan yuklab olish mumkin.
+
+### Imzolash kaliti
+
+Yangilangan APK eski ilova ustidan o‘rnatilishi uchun **har doim bir xil kalit** bilan imzolanishi kerak. Kalit (`release.jks`) va paroli gitga qo‘shilmaydi.
+
+- Kompyuterda: `android/release.jks` va `android/keystore.properties` fayllarini qo‘ying:
+
+  ```properties
+  storeFile=release.jks
+  storePassword=...
+  keyAlias=reaktiv
+  keyPassword=...
+  ```
+
+- GitHub Actions uchun: repo → Settings → Secrets and variables → Actions → quyidagi sirlarni qo‘shing:
+  `ANDROID_KEYSTORE_BASE64` (`base64 -w0 release.jks` natijasi), `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` (`reaktiv`), `ANDROID_KEY_PASSWORD`.
+
+Kalit topilmasa, APK sinov (debug) kaliti bilan imzolanadi — bunday faylni sinab ko‘rish mumkin, lekin asosiy ilova ustidan yangilanmaydi.
+
 ## Testlar
 
 ```bash
