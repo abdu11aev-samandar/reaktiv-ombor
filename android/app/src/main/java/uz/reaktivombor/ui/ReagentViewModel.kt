@@ -39,41 +39,50 @@ class ReagentViewModel(app: Application) : AndroidViewModel(app) {
     private val _pendingRestore = MutableStateFlow<Backup.Parsed?>(null)
     val pendingRestore: StateFlow<Backup.Parsed?> = _pendingRestore.asStateFlow()
 
+    /** Saqlash davom etayotganda ikkinchi bosish e’tiborsiz qoldiriladi (ekran aylansa ham). */
+    private var saveInFlight = false
+
     fun save(id: Long?, values: ReagentValues, onSaved: () -> Unit) {
+        if (saveInFlight) return
+        saveInFlight = true
         viewModelScope.launch {
-            // Hozirgi bosqich “xabar berilgan” deb belgilanadi: o‘zingiz kiritgan narsa haqida eslatma kelmaydi.
-            val stage = AlertStage.of(values.expiresAt, LocalDate.now()).ordinal
-            val existing = id?.let { dao.getById(it) }
-            if (existing == null) {
-                dao.insert(
-                    Reagent(
-                        name = values.name,
-                        receivedAt = values.receivedAt,
-                        givenAmount = values.givenAmount,
-                        unit = values.unit,
-                        expiresAt = values.expiresAt,
-                        stockAmount = values.stockAmount,
-                        createdAt = System.currentTimeMillis(),
-                        notifiedStage = stage,
-                    ),
-                )
-                _messages.emit("«${values.name}» qo‘shildi.")
-            } else {
-                dao.update(
-                    existing.copy(
-                        name = values.name,
-                        receivedAt = values.receivedAt,
-                        givenAmount = values.givenAmount,
-                        unit = values.unit,
-                        expiresAt = values.expiresAt,
-                        stockAmount = values.stockAmount,
-                        // Faqat muddat o‘zgarganda bosqich yangilanadi: miqdorni tahrirlash kutilayotgan eslatmani “yutib” yubormaydi.
-                        notifiedStage = if (existing.expiresAt == values.expiresAt) existing.notifiedStage else stage,
-                    ),
-                )
-                _messages.emit("«${values.name}» saqlandi.")
+            try {
+                // Hozirgi bosqich “xabar berilgan” deb belgilanadi: o‘zingiz kiritgan narsa haqida eslatma kelmaydi.
+                val stage = AlertStage.of(values.expiresAt, LocalDate.now()).ordinal
+                val existing = id?.let { dao.getById(it) }
+                if (existing == null) {
+                    dao.insert(
+                        Reagent(
+                            name = values.name,
+                            receivedAt = values.receivedAt,
+                            givenAmount = values.givenAmount,
+                            unit = values.unit,
+                            expiresAt = values.expiresAt,
+                            stockAmount = values.stockAmount,
+                            createdAt = System.currentTimeMillis(),
+                            notifiedStage = stage,
+                        ),
+                    )
+                    _messages.emit("«${values.name}» qo‘shildi.")
+                } else {
+                    dao.update(
+                        existing.copy(
+                            name = values.name,
+                            receivedAt = values.receivedAt,
+                            givenAmount = values.givenAmount,
+                            unit = values.unit,
+                            expiresAt = values.expiresAt,
+                            stockAmount = values.stockAmount,
+                            // Faqat muddat o‘zgarganda bosqich yangilanadi: miqdorni tahrirlash kutilayotgan eslatmani “yutib” yubormaydi.
+                            notifiedStage = if (existing.expiresAt == values.expiresAt) existing.notifiedStage else stage,
+                        ),
+                    )
+                    _messages.emit("«${values.name}» saqlandi.")
+                }
+                onSaved()
+            } finally {
+                saveInFlight = false
             }
-            onSaved()
         }
     }
 
