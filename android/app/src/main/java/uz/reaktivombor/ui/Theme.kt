@@ -74,8 +74,8 @@ private val LightStatus = StatusPalette(
     pill = pills,
     hint = mapOf(
         ExpiryStatus.GREEN to Color(0xFF15803D),
-        ExpiryStatus.YELLOW to Color(0xFFA16207),
-        ExpiryStatus.RED to Color(0xFFDC2626),
+        ExpiryStatus.YELLOW to Color(0xFF8A5A00),
+        ExpiryStatus.RED to Color(0xFFB91C1C),
     ),
 )
 

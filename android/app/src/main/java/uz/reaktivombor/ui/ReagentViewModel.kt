@@ -6,9 +6,11 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -18,6 +20,7 @@ import uz.reaktivombor.domain.AlertStage
 import uz.reaktivombor.domain.Backup
 import uz.reaktivombor.domain.BackupException
 import uz.reaktivombor.domain.ReagentValues
+import java.io.ByteArrayOutputStream
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
@@ -31,6 +34,10 @@ class ReagentViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _messages = MutableSharedFlow<String>(extraBufferCapacity = 4)
     val messages: SharedFlow<String> = _messages
+
+    /** Tasdiq kutayotgan zaxira (ekran aylansa ham yo‘qolmaydi). */
+    private val _pendingRestore = MutableStateFlow<Backup.Parsed?>(null)
+    val pendingRestore: StateFlow<Backup.Parsed?> = _pendingRestore.asStateFlow()
 
     fun save(id: Long?, values: ReagentValues, onSaved: () -> Unit) {
         viewModelScope.launch {
@@ -60,7 +67,8 @@ class ReagentViewModel(app: Application) : AndroidViewModel(app) {
                         unit = values.unit,
                         expiresAt = values.expiresAt,
                         stockAmount = values.stockAmount,
-                        notifiedStage = stage,
+                        // Faqat muddat o‘zgarganda bosqich yangilanadi: miqdorni tahrirlash kutilayotgan eslatmani “yutib” yubormaydi.
+                        notifiedStage = if (existing.expiresAt == values.expiresAt) existing.notifiedStage else stage,
                     ),
                 )
                 _messages.emit("«${values.name}» saqlandi.")
@@ -100,24 +108,31 @@ class ReagentViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Faylni o‘qiydi; tiklashni foydalanuvchi tasdiqlagandan keyin [restore] bajaradi. */
-    fun readBackup(uri: Uri, onParsed: (Backup.Parsed) -> Unit) {
+    /** Faylni o‘qiydi; tiklashni foydalanuvchi tasdiqlagandan keyin [confirmRestore] bajaradi. */
+    fun readBackup(uri: Uri) {
         viewModelScope.launch {
             try {
                 val text = withContext(Dispatchers.IO) {
                     val resolver = getApplication<Application>().contentResolver
                     val stream = resolver.openInputStream(uri) ?: throw BackupException("Faylni ochib bo‘lmadi.")
                     stream.use { input ->
-                        val bytes = input.readBytes()
-                        if (bytes.size > MAX_BACKUP_BYTES) throw BackupException("Fayl juda katta — bu zaxira nusxa emas.")
-                        bytes.toString(Charsets.UTF_8)
+                        // Katta faylni butunlay xotiraga o‘qimaslik uchun bo‘lib-bo‘lib o‘qiymiz.
+                        val buffer = ByteArrayOutputStream()
+                        val chunk = ByteArray(8 * 1024)
+                        while (true) {
+                            val read = input.read(chunk)
+                            if (read < 0) break
+                            if (buffer.size() + read > MAX_BACKUP_BYTES) throw BackupException("Fayl juda katta — bu zaxira nusxa emas.")
+                            buffer.write(chunk, 0, read)
+                        }
+                        buffer.toString(Charsets.UTF_8.name())
                     }
                 }
                 val parsed = Backup.fromJson(text, LocalDate.now())
                 if (parsed.reagents.isEmpty()) {
                     _messages.emit("Zaxira faylida tiklanadigan reaktiv topilmadi.")
                 } else {
-                    onParsed(parsed)
+                    _pendingRestore.value = parsed
                 }
             } catch (e: BackupException) {
                 _messages.emit(e.message ?: "Bu fayl zaxira nusxa emas.")
@@ -127,7 +142,13 @@ class ReagentViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun restore(parsed: Backup.Parsed) {
+    fun dismissRestore() {
+        _pendingRestore.value = null
+    }
+
+    fun confirmRestore() {
+        val parsed = _pendingRestore.value ?: return
+        _pendingRestore.value = null
         viewModelScope.launch {
             dao.replaceAll(parsed.reagents)
             val skipped = if (parsed.skipped > 0) " ${parsed.skipped} ta buzuq qator tashlab ketildi." else ""

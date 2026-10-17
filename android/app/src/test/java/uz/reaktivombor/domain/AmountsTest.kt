@@ -16,6 +16,8 @@ class AmountsTest {
         assertEquals(BigDecimal("2.556"), Amounts.parse("2,5555"))
         assertNull(Amounts.parse("ko‘p"))
         assertNull(Amounts.parse("1,5,6"))
+        assertNull(Amounts.parse("1e3"))
+        assertNull(Amounts.parse("1e999999999"))
         assertNull(Amounts.parse(""))
     }
 

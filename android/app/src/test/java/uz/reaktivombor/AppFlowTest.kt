@@ -124,11 +124,16 @@ class AppFlowTest {
         compose.onNodeWithContentDescription("Qidiruvni tozalash").performClick()
 
         // Forma: hammasi majburiy
+        compose.onNodeWithContentDescription("Reaktiv qo‘shish").assertExists()
         click("Reaktiv qo‘shish")
         click("Saqlash")
         compose.onNodeWithText("Reaktiv nomi kiritilishi shart.").assertExists()
-        compose.onNodeWithText("Kelgan vaqt kiritilishi shart.").assertExists()
-        compose.onNodeWithText("Yaroqlilik muddati kiritilishi shart.").assertExists()
+        compose.onNodeWithContentDescription("Reaktiv qo‘shish").assertDoesNotExist()
+        compose.onNode(hasContentDescription("Kelgan vaqt kiritilishi shart.", substring = true)).assertExists()
+        compose.onNode(hasContentDescription("Yaroqlilik muddati kiritilishi shart.", substring = true)).assertExists()
+        // Xatolar yozilgan sari yangilanadi.
+        compose.onNodeWithText("Reaktiv nomi *").performTextInput("Formalin")
+        compose.onAllNodesWithText("Reaktiv nomi kiritilishi shart.").assertCountEquals(0)
         compose.onNodeWithText("Berilgan miqdor kiritilishi shart.").assertExists()
         compose.onNodeWithText("Ombordagi miqdor kiritilishi shart.").assertExists()
         screenshot("02-forma-xatolar")

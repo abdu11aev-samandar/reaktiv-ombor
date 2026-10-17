@@ -25,12 +25,12 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import uz.reaktivombor.domain.Backup
 import uz.reaktivombor.notify.ExpiryNotifications
 import uz.reaktivombor.ui.ReaktivTheme
 import uz.reaktivombor.ui.ReagentFormScreen
@@ -59,7 +59,9 @@ private fun AppRoot(vm: ReagentViewModel = viewModel()) {
     var formOpen by rememberSaveable { mutableStateOf(false) }
     var editingId by rememberSaveable { mutableStateOf<Long?>(null) }
     var formKey by rememberSaveable { mutableIntStateOf(0) }
-    var pendingRestore by remember { mutableStateOf<Backup.Parsed?>(null) }
+    val pendingRestore by vm.pendingRestore.collectAsStateWithLifecycle()
+    // Ro‘yxatdagi qidiruv, filtr, saralash va aylantirish joyi formadan qaytganda saqlanib qoladi.
+    val screens = rememberSaveableStateHolder()
 
     // “Bugun” ilova qayta ochilganda yangilanadi (ranglar yarim tundan keyin o‘zgaradi).
     var today by remember { mutableStateOf(LocalDate.now()) }
@@ -90,7 +92,7 @@ private fun AppRoot(vm: ReagentViewModel = viewModel()) {
         if (uri != null) vm.exportTo(uri)
     }
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
-        if (uri != null) vm.readBackup(uri) { pendingRestore = it }
+        if (uri != null) vm.readBackup(uri)
     }
 
     if (formOpen) {
@@ -120,30 +122,32 @@ private fun AppRoot(vm: ReagentViewModel = viewModel()) {
             }
         }
     } else {
-        ReagentListScreen(
-            reagents = reagents,
-            today = today,
-            snackbar = snackbar,
-            notificationsEnabled = notificationsEnabled,
-            onEnableNotifications = { openNotificationSettings(context) },
-            onAdd = {
-                editingId = null
-                formKey++
-                formOpen = true
-            },
-            onEdit = { reagent ->
-                editingId = reagent.id
-                formOpen = true
-            },
-            onExport = { exportLauncher.launch(vm.backupFileName()) },
-            onImport = { importLauncher.launch(arrayOf("application/json", "text/plain", "application/octet-stream", "*/*")) },
-        )
+        screens.SaveableStateProvider("list") {
+            ReagentListScreen(
+                reagents = reagents,
+                today = today,
+                snackbar = snackbar,
+                notificationsEnabled = notificationsEnabled,
+                onEnableNotifications = { openNotificationSettings(context) },
+                onAdd = {
+                    editingId = null
+                    formKey++
+                    formOpen = true
+                },
+                onEdit = { reagent ->
+                    editingId = reagent.id
+                    formOpen = true
+                },
+                onExport = { exportLauncher.launch(vm.backupFileName()) },
+                onImport = { importLauncher.launch(arrayOf("application/json", "text/plain", "application/octet-stream", "*/*")) },
+            )
+        }
     }
 
     pendingRestore?.let { parsed ->
         val currentCount = reagents?.size ?: 0
         AlertDialog(
-            onDismissRequest = { pendingRestore = null },
+            onDismissRequest = vm::dismissRestore,
             title = { Text("Zaxiradan tiklansinmi?") },
             text = {
                 val skipped = if (parsed.skipped > 0) " ${parsed.skipped} ta buzuq qator tashlab ketiladi." else ""
@@ -153,9 +157,9 @@ private fun AppRoot(vm: ReagentViewModel = viewModel()) {
                 )
             },
             confirmButton = {
-                TextButton(onClick = { vm.restore(parsed); pendingRestore = null }) { Text("Tiklash") }
+                TextButton(onClick = vm::confirmRestore) { Text("Tiklash") }
             },
-            dismissButton = { TextButton(onClick = { pendingRestore = null }) { Text("Bekor qilish") } },
+            dismissButton = { TextButton(onClick = vm::dismissRestore) { Text("Bekor qilish") } },
         )
     }
 }

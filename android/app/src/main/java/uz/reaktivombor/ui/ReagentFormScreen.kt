@@ -50,6 +50,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -87,21 +90,24 @@ fun ReagentFormScreen(
     var unit by rememberSaveable { mutableStateOf(reagent?.unit?.takeIf { it in Amounts.UNITS } ?: "gr") }
     var pickerTarget by rememberSaveable { mutableStateOf<DateTarget?>(null) }
     var confirmDelete by rememberSaveable { mutableStateOf(false) }
-    var errors by remember { mutableStateOf<Map<Field, String>>(emptyMap()) }
+    // Bir marta «Saqlash» bosilgach xatolar ko‘rsatiladi va yozilgan sari yangilanadi (ekran aylansa ham saqlanadi).
+    var submitted by rememberSaveable { mutableStateOf(false) }
+    // Ikki marta tez bosilganda ikki qator qo‘shilmasin.
+    var saving by remember { mutableStateOf(false) }
     val focus = LocalFocusManager.current
 
     val receivedAt = receivedEpoch?.let(LocalDate::ofEpochDay)
     val expiresAt = expiresEpoch?.let(LocalDate::ofEpochDay)
+    val validation = ReagentValidator.validate(ReagentInput(name, receivedAt, expiresAt, given, stock, unit))
+    val errors = if (submitted) (validation as? Validation.Invalid)?.errors.orEmpty() else emptyMap()
 
     fun submit(andNew: Boolean) {
+        if (saving) return
         focus.clearFocus()
-        val result = ReagentValidator.validate(ReagentInput(name, receivedAt, expiresAt, given, stock, unit))
-        when (result) {
-            is Validation.Invalid -> errors = result.errors
-            is Validation.Valid -> {
-                errors = emptyMap()
-                onSave(result.values, andNew)
-            }
+        submitted = true
+        if (validation is Validation.Valid) {
+            saving = true
+            onSave(validation.values, andNew)
         }
     }
 
@@ -163,8 +169,8 @@ fun ReagentFormScreen(
                 }
             }
 
-            DateField("Kelgan vaqt *", receivedAt, errors[Field.RECEIVED_AT]) { pickerTarget = DateTarget.RECEIVED }
-            DateField("Yaroqlilik muddati *", expiresAt, errors[Field.EXPIRES_AT]) { pickerTarget = DateTarget.EXPIRES }
+            DateField("Kelgan vaqt", receivedAt, errors[Field.RECEIVED_AT]) { pickerTarget = DateTarget.RECEIVED }
+            DateField("Yaroqlilik muddati", expiresAt, errors[Field.EXPIRES_AT]) { pickerTarget = DateTarget.EXPIRES }
 
             Text("O‘lchov birligi *", style = MaterialTheme.typography.labelLarge)
             Row(
@@ -172,7 +178,12 @@ fun ReagentFormScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Amounts.UNITS.forEach { option ->
-                    FilterChip(selected = unit == option, onClick = { unit = option }, label = { Text(option) })
+                    FilterChip(
+                        selected = unit == option,
+                        onClick = { unit = option },
+                        label = { Text(option) },
+                        colors = selectedChipColors(),
+                    )
                 }
             }
 
@@ -187,8 +198,8 @@ fun ReagentFormScreen(
 
             expiresAt?.let { date ->
                 val status = ExpiryStatus.of(date, LocalDate.now())
-                Row {
-                    Text("Ro‘yxatda shunday ko‘rinadi:  ", style = MaterialTheme.typography.bodySmall)
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("Ro‘yxatda shunday ko‘rinadi:", style = MaterialTheme.typography.bodySmall)
                     NamePill(name.trim().ifEmpty { "Reaktiv nomi" }, status)
                 }
             }
@@ -202,11 +213,11 @@ fun ReagentFormScreen(
             }
 
             Spacer(Modifier.height(4.dp))
-            Button(onClick = { submit(andNew = false) }, modifier = Modifier.fillMaxWidth()) {
+            Button(onClick = { submit(andNew = false) }, enabled = !saving, modifier = Modifier.fillMaxWidth()) {
                 Text("Saqlash")
             }
             if (reagent == null) {
-                OutlinedButton(onClick = { submit(andNew = true) }, modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(onClick = { submit(andNew = true) }, enabled = !saving, modifier = Modifier.fillMaxWidth()) {
                     Text("Saqlash va yana qo‘shish")
                 }
             }
@@ -265,13 +276,19 @@ fun ReagentFormScreen(
 
 @Composable
 private fun DateField(label: String, value: LocalDate?, error: String?, onClick: () -> Unit) {
+    val spoken = buildString {
+        append(label).append(", majburiy: ")
+        append(value?.format(DATE_FORMAT) ?: "tanlanmagan")
+        if (error != null) append(". ").append(error)
+    }
     Box {
         OutlinedTextField(
             value = value?.format(DATE_FORMAT) ?: "",
             onValueChange = {},
             readOnly = true,
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text(label) },
+            // TalkBack uchun bitta element qoladi — pastdagi bosiladigan qatlam.
+            modifier = Modifier.fillMaxWidth().clearAndSetSemantics { },
+            label = { Text("$label *") },
             placeholder = { Text("Sanani tanlang") },
             trailingIcon = { Icon(Icons.Filled.DateRange, contentDescription = null) },
             isError = error != null,
@@ -282,7 +299,8 @@ private fun DateField(label: String, value: LocalDate?, error: String?, onClick:
         Box(
             Modifier
                 .matchParentSize()
-                .clickable(onClickLabel = "Sanani tanlash", role = Role.Button, onClick = onClick),
+                .clickable(onClickLabel = "Sanani tanlash", role = Role.Button, onClick = onClick)
+                .semantics { contentDescription = spoken },
         )
     }
 }

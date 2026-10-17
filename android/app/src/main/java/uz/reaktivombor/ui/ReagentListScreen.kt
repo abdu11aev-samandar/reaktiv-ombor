@@ -6,6 +6,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.calculateEndPadding
+import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -26,12 +28,14 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -52,10 +56,12 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import uz.reaktivombor.data.Reagent
 import uz.reaktivombor.domain.Amounts
@@ -94,23 +100,26 @@ fun ReagentListScreen(
     val needle = searchKey(search.trim())
     val all = (reagents ?: emptyList())
         .filter { needle.isEmpty() || searchKey(it.name).contains(needle) }
-        .mapIndexed { index, r -> ListRow(r, index + 1, ExpiryStatus.of(r.expiresAt, today), daysUntil(r.expiresAt, today)) }
+        .map { r -> ListRow(r, 0, ExpiryStatus.of(r.expiresAt, today), daysUntil(r.expiresAt, today)) }
     val counts = all.groupingBy { it.status }.eachCount()
     val selected = statusFilter?.let { runCatching { ExpiryStatus.valueOf(it) }.getOrNull() }
+    // № — ko‘rinib turgan tartib bo‘yicha (web ilovadagi kabi).
     val visible = all
         .filter { selected == null || it.status == selected }
         .let { rows -> if (sortByExpiry) rows.sortedBy { it.reagent.expiresAt } else rows }
+        .mapIndexed { index, row -> ListRow(row.reagent, index + 1, row.status, row.days) }
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = {
                     Column {
-                        Text("Reaktivlar hisobi", fontWeight = FontWeight.Bold)
+                        Text("Reaktivlar hisobi", fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text(
                             "Bugun: ${today.format(DATE_FORMAT)}",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
                         )
                     }
                 },
@@ -136,6 +145,8 @@ fun ReagentListScreen(
         floatingActionButton = {
             ExtendedFloatingActionButton(
                 onClick = onAdd,
+                // TalkBack faqat “Tugma” demasligi uchun.
+                modifier = Modifier.semantics { contentDescription = "Reaktiv qo‘shish" },
                 icon = { Icon(Icons.Filled.Add, contentDescription = null) },
                 text = { Text("Reaktiv qo‘shish") },
             )
@@ -149,11 +160,12 @@ fun ReagentListScreen(
             return@Scaffold
         }
 
+        val direction = LocalLayoutDirection.current
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(
-                start = 16.dp,
-                end = 16.dp,
+                start = inner.calculateStartPadding(direction) + 16.dp,
+                end = inner.calculateEndPadding(direction) + 16.dp,
                 top = inner.calculateTopPadding() + 8.dp,
                 bottom = inner.calculateBottomPadding() + 96.dp,
             ),
@@ -191,6 +203,7 @@ fun ReagentListScreen(
                         selected = selected == null,
                         onClick = { statusFilter = null },
                         label = { Text("Hammasi  ${all.size}") },
+                        colors = selectedChipColors(),
                     )
                     ExpiryStatus.entries.forEach { status ->
                         FilterChip(
@@ -198,12 +211,14 @@ fun ReagentListScreen(
                             onClick = { statusFilter = if (selected == status) null else status.name },
                             leadingIcon = { StatusDot(status) },
                             label = { Text("${status.label}  ${counts[status] ?: 0}") },
+                            colors = selectedChipColors(),
                         )
                     }
                     FilterChip(
                         selected = sortByExpiry,
                         onClick = { sortByExpiry = !sortByExpiry },
                         label = { Text(if (sortByExpiry) "▲ Muddati yaqinlari birinchi" else "↕ Muddati yaqinlari birinchi") },
+                        colors = selectedChipColors(),
                     )
                 }
             }
@@ -232,6 +247,7 @@ private fun ReagentCard(reagent: Reagent, number: Int, status: ExpiryStatus, day
         onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(10.dp),
+        colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
     ) {
         Column(Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -278,6 +294,14 @@ fun NamePill(name: String, status: ExpiryStatus, modifier: Modifier = Modifier) 
     }
 }
 
+/** Tanlangan chip aniq ko‘rinsin (standart rang fon bilan deyarli bir xil edi). */
+@Composable
+fun selectedChipColors() = FilterChipDefaults.filterChipColors(
+    selectedContainerColor = MaterialTheme.colorScheme.primary,
+    selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
+    selectedLeadingIconColor = MaterialTheme.colorScheme.onPrimary,
+)
+
 @Composable
 fun StatusDot(status: ExpiryStatus) {
     val (color, _) = LocalStatusPalette.current.pill.getValue(status)
@@ -286,6 +310,7 @@ fun StatusDot(status: ExpiryStatus) {
 
 @Composable
 private fun InfoRow(label: String, value: String, extra: (@Composable () -> Unit)? = null) {
+    // Katta shriftda ham ikkala ustun o‘z joyida o‘raladi (bir-birini siqib chiqarmaydi).
     Row(
         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
         verticalAlignment = Alignment.Top,
@@ -294,9 +319,9 @@ private fun InfoRow(label: String, value: String, extra: (@Composable () -> Unit
             label,
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(end = 12.dp),
+            modifier = Modifier.weight(0.45f).padding(end = 12.dp),
         )
-        Column(Modifier.weight(1f), horizontalAlignment = Alignment.End) {
+        Column(Modifier.weight(0.55f), horizontalAlignment = Alignment.End) {
             Text(value, style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.End)
             extra?.invoke()
         }

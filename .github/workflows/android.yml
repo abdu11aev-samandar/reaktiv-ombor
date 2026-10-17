@@ -53,9 +53,13 @@ jobs:
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: ./gradlew --no-daemon testDebugUnitTest assembleRelease
 
+      - name: Warn about test signing key
+        if: env.HAS_KEYSTORE != 'true'
+        run: echo "::warning::Imzolash kaliti (ANDROID_KEYSTORE_*) GitHub Secrets'da yo'q — APK sinov kaliti bilan imzolandi va telefondagi ilova ustidan o'rnatilmaydi. README → Android ilova → Imzolash kaliti."
+
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: reaktivlar-apk
+          name: ${{ env.HAS_KEYSTORE == 'true' && 'reaktivlar-apk' || 'reaktivlar-apk-SINOV-kaliti' }}
           path: android/app/build/outputs/apk/release/*.apk
           if-no-files-found: error

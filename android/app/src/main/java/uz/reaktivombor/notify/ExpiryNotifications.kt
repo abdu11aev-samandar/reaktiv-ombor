@@ -12,11 +12,11 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import androidx.work.CoroutineWorker
-import androidx.work.ExistingPeriodicWorkPolicy
-import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.ExistingWorkPolicy
+import androidx.work.OneTimeWorkRequest
+import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
-import uz.reaktivombor.MainActivity
 import uz.reaktivombor.R
 import uz.reaktivombor.data.AppDatabase
 import uz.reaktivombor.data.Reagent
@@ -30,8 +30,10 @@ import java.util.concurrent.TimeUnit
 /** Muddat yaqinlashganda telefonga keladigan eslatmalar. */
 object ExpiryNotifications {
     private const val CHANNEL_ID = "expiry"
-    private const val NOTIFICATION_ID = 1
-    private const val WORK_NAME = "expiry-check"
+    private const val WORK_NAME = "expiry-check-daily"
+
+    /** 1.0.0 versiyadagi davriy ish (vaqt o‘tishi bilan 9:00 dan surilib ketardi). */
+    private const val LEGACY_PERIODIC_WORK = "expiry-check"
 
     /** Har kuni shu soatda tekshiriladi. */
     const val CHECK_HOUR = 9
@@ -44,15 +46,24 @@ object ExpiryNotifications {
         context.getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
     }
 
+    /** Ilova ochilganda: navbatdagi tekshiruv rejalashtirilmagan bo‘lsa — ertangi (yoki bugungi) 9:00 ga. */
     fun schedule(context: Context) {
-        val now = LocalDateTime.now()
+        val workManager = WorkManager.getInstance(context)
+        workManager.cancelUniqueWork(LEGACY_PERIODIC_WORK)
+        workManager.enqueueUniqueWork(WORK_NAME, ExistingWorkPolicy.KEEP, nextCheck())
+    }
+
+    /** Tekshiruv ishlayotganda keyingisini zanjirga qo‘shadi — har kuni aynan 9:00 atrofida, surilmasdan. */
+    fun scheduleFollowing(context: Context) {
+        WorkManager.getInstance(context).enqueueUniqueWork(WORK_NAME, ExistingWorkPolicy.APPEND_OR_REPLACE, nextCheck())
+    }
+
+    private fun nextCheck(now: LocalDateTime = LocalDateTime.now()): OneTimeWorkRequest {
         var next = now.toLocalDate().atTime(CHECK_HOUR, 0)
         if (!next.isAfter(now)) next = next.plusDays(1)
-
-        val request = PeriodicWorkRequestBuilder<ExpiryCheckWorker>(1, TimeUnit.DAYS)
+        return OneTimeWorkRequestBuilder<ExpiryCheckWorker>()
             .setInitialDelay(Duration.between(now, next).toMillis(), TimeUnit.MILLISECONDS)
             .build()
-        WorkManager.getInstance(context).enqueueUniquePeriodicWork(WORK_NAME, ExistingPeriodicWorkPolicy.KEEP, request)
     }
 
     fun canNotify(context: Context): Boolean {
@@ -77,15 +88,15 @@ object ExpiryNotifications {
         val title = if (sorted.size == 1) {
             "«${sorted[0].first.name}»: ${describe(sorted[0].second, daysUntil(sorted[0].first.expiresAt, today))}"
         } else {
-            "${sorted.size} ta reaktiv muddati yaqinlashdi"
+            "Muddat bo‘yicha ogohlantirish: ${sorted.size} ta reaktiv"
         }
 
-        val openApp = PendingIntent.getActivity(
-            context,
-            0,
-            Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-        )
+        // Ikonka bosilgandek ochiladi: ilova ochiq bo‘lsa qayta yaratilmaydi (yozilayotgan forma yo‘qolmaydi).
+        val launch = context.packageManager.getLaunchIntentForPackage(context.packageName)
+            ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
+        val openApp = launch?.let {
+            PendingIntent.getActivity(context, 0, it, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        }
 
         val style = NotificationCompat.InboxStyle().also { inbox -> lines.take(7).forEach(inbox::addLine) }
         if (lines.size > 7) style.setSummaryText("yana ${lines.size - 7} ta")
@@ -101,7 +112,8 @@ object ExpiryNotifications {
             .build()
 
         try {
-            NotificationManagerCompat.from(context).notify(NOTIFICATION_ID, notification)
+            // Har kun uchun alohida: ko‘rilmagan kechagi eslatma bugungisi bilan almashib ketmaydi.
+            NotificationManagerCompat.from(context).notify(today.toEpochDay().toInt(), notification)
         } catch (e: SecurityException) {
             // Ruxsat shu orada olib qo‘yilgan — keyingi safar yana urinamiz.
         }
@@ -114,6 +126,8 @@ object ExpiryNotifications {
  */
 class ExpiryCheckWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
+        ExpiryNotifications.scheduleFollowing(applicationContext)
+
         val dao = AppDatabase.get(applicationContext).reagentDao()
         val today = LocalDate.now()
         val canNotify = ExpiryNotifications.canNotify(applicationContext)

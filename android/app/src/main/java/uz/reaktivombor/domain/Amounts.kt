@@ -11,7 +11,8 @@ object Amounts {
 
     val UNITS = listOf("gr", "ml", "kg", "l", "dona")
 
-    private val NUMERIC = Regex("""[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?""")
+    // Faqat oddiy o‘nli son (1e999999 kabi daraja ko‘rinishi ilovani qotirib qo‘yishi mumkin edi).
+    private val NUMERIC = Regex("""[+-]?(\d+(\.\d*)?|\.\d+)""")
 
     /** "1 200,5" → "1200.5" (bo‘shliq olib tashlanadi, vergul nuqtaga aylanadi). */
     fun normalize(raw: String): String =
