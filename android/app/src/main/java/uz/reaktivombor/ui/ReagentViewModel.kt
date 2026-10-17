@@ -85,7 +85,10 @@ class ReagentViewModel(app: Application) : AndroidViewModel(app) {
                 val items = dao.getAll()
                 val json = Backup.toJson(items, LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME))
                 withContext(Dispatchers.IO) {
-                    val stream = getApplication<Application>().contentResolver.openOutputStream(uri, "wt")
+                    val resolver = getApplication<Application>().contentResolver
+                    // Ba’zi provayderlar (masalan, Google Drive) "wt" rejimini qo‘llamaydi.
+                    val stream = runCatching { resolver.openOutputStream(uri, "wt") }.getOrNull()
+                        ?: resolver.openOutputStream(uri, "w")
                         ?: throw IllegalStateException()
                     stream.bufferedWriter(Charsets.UTF_8).use { it.write(json) }
                 }
