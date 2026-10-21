@@ -118,6 +118,31 @@ Yangilangan APK eski ilova ustidan o‘rnatilishi uchun **har doim bir xil kalit
 
 Kalit topilmasa, APK sinov (debug) kaliti bilan imzolanadi — bunday faylni sinab ko‘rish mumkin, lekin asosiy ilova ustidan yangilanmaydi.
 
+## Windows dasturi
+
+`desktop/` papkada kompyuter uchun dastur bor (Kotlin, Compose Desktop). Ekrani **Excel jadvaliga o‘xshaydi**, internet kerak emas.
+
+- Kataklarga to‘g‘ridan-to‘g‘ri yoziladi: **Enter** — tahrirlash/keyingi qator, **Tab** — o‘ngga, strelkalar — yurish, **Esc** — bekor qilish, **Delete** — katakni tozalash
+- **Ctrl+Z / Ctrl+Y** — bekor qilish / qaytarish, **Ctrl+C / Ctrl+V** — nusxa olish / qo‘yish (Excel’dan bir nechta qatorni birdaniga qo‘yish mumkin), **Ctrl+;** — bugungi sana, **Ctrl+F** — qidiruv, **Ctrl+−** — qatorni o‘chirish
+- Ustun sarlavhasini bosish — saralash (▲/▼), rang bo‘yicha filtr, nom bo‘yicha qidiruv
+- Reaktiv nomi muddatga qarab bo‘yaladi (telefon va web ilovadagi bilan bir xil qoida); hali to‘ldirilmagan qator sariq fonda, yetishmayotgan kataklar qizil — sichqoncha bilan ustiga borilsa sababi chiqadi
+- Har bir o‘zgarish avtomatik saqlanadi: `%APPDATA%\Reaktivlar\reaktivlar.json` (oldingi holat — `reaktivlar.bak.json`)
+- **Fayl** menyusi: telefon zaxirasini ochish, telefon uchun zaxira saqlash (telefonda ⋮ → «Zaxiradan tiklash»), Excel uchun CSV
+- Ma’lumotlar fayli telefon zaxirasi formatida — uni to‘g‘ridan-to‘g‘ri telefonga ko‘chirib tiklash ham mumkin
+
+### O‘rnatish
+
+GitHub → **Actions** → «Windows» → oxirgi muvaffaqiyatli ishga tushirish → **Reaktivlar-Windows-msi** artefaktini yuklab oling, ichidagi `.msi` ni oching. Administrator huquqi kerak emas. Windows «noma’lum nashriyotchi» deb ogohlantirsa: **Batafsil → Baribir ishga tushirish**.
+
+### Yig‘ish
+
+```bash
+cd desktop
+./gradlew test          # testlar
+./gradlew run           # dasturni ishga tushirish
+./gradlew packageMsi    # Windows o‘rnatuvchisi (faqat Windows’da)
+```
+
 ## Testlar
 
 ```bash
