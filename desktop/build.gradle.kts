@@ -90,6 +90,14 @@ tasks.matching { it.name == "packageDeb" }.configureEach {
                     Regex("""^(xdg-desktop-menu uninstall \S+)[ \t]*$""", RegexOption.MULTILINE),
                     "$1 2>/dev/null || true\nrm -f $desktopFile",
                 )
+                // Ubuntu 24.04 da yig‘ilgan paket kutubxonalarning yangi nomini (…t64) talab qiladi. Debian 12, Ubuntu 22.04
+                // va Mint 21 da ular eski nom bilan — ikkalasidan biri yetadi.
+                val control = work.resolve("DEBIAN/control")
+                control.writeText(
+                    control.readText().lines().joinToString("\n") { line ->
+                        if (line.startsWith("Depends:")) line.replace(Regex("""\b(lib[a-z0-9.+-]+?)t64\b(?! \|)"""), "$1t64 | $1") else line
+                    },
+                )
                 run("dpkg-deb", "--build", "--root-owner-group", "-Zxz", work.path, deb.path)
                 logger.lifecycle("Menyu yorlig‘i skriptlari tuzatildi: ${deb.name}")
             }

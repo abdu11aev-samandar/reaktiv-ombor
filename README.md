@@ -130,7 +130,7 @@ Kalit topilmasa, APK sinov (debug) kaliti bilan imzolanadi — bunday faylni sin
 - Har bir o‘zgarish avtomatik saqlanadi: `%APPDATA%\Reaktivlar\reaktivlar.json` (oldingi holat — `reaktivlar.bak.json`)
 - **Fayl** menyusi: telefon zaxirasini ochish, telefon uchun zaxira saqlash (telefonda ⋮ → «Zaxiradan tiklash»; tugallanmagan qatorlar ham faylda qoladi, ularni faqat kompyuter o‘qiydi), Excel uchun CSV
 - Excel’dan qo‘yilgan «/» li sanalar kompyuterning mintaqaviy formati bo‘yicha o‘qiladi: «English (United States)» bo‘lsa oy/kun/yil, aks holda kun/oy/yil
-- Kompyuter o‘chirilganda yoki qayta yuklanganda ham yozib turilgan katak saqlanadi
+- Windows o‘chirilganda yoki qayta yuklanganda ham yozib turilgan katak saqlanadi
 - Ma’lumotlar fayli telefon zaxirasi formatida — uni to‘g‘ridan-to‘g‘ri telefonga ko‘chirib tiklash ham mumkin
 
 ### O‘rnatish
@@ -145,7 +145,7 @@ GitHub → **Actions** → «Windows» → **Reaktivlar-Linux-deb** artefaktidag
 sudo apt install ./reaktivlar_*_amd64.deb
 ```
 
-Dastur menyuning «Ofis» bo‘limida chiqadi (yoki `/opt/reaktivlar/bin/Reaktivlar`). Ma’lumotlar: `~/.local/share/reaktivlar/reaktivlar.json`. O‘chirish: `sudo apt remove reaktivlar` (ma’lumotlar qoladi).
+Dastur menyuning «Ofis» bo‘limida chiqadi (yoki `/opt/reaktivlar/bin/Reaktivlar`). Ma’lumotlar: `~/.local/share/reaktivlar/reaktivlar.json`. O‘chirish: `sudo apt remove reaktivlar` (ma’lumotlar qoladi). Linux’da tizimdan chiqish yoki kompyuterni o‘chirishdan oldin yozib turgan katakda Enter bosing yoki dasturni yoping — aks holda o‘sha katak saqlanmay qolishi mumkin.
 
 ### Yig‘ish
 

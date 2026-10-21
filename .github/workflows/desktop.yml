@@ -63,6 +63,10 @@ jobs:
           sudo apt-get install -y ./build/compose/binaries/main/deb/*.deb
           test -x /opt/reaktivlar/bin/Reaktivlar
           sudo apt-get purge -y reaktivlar
+      - name: Install test on Debian 12 (eski kutubxona nomlari)
+        run: |
+          docker run --rm -v "$PWD/build/compose/binaries/main/deb:/d" debian:12 \
+            sh -c 'apt-get update -qq && apt-get install -y -qq /d/*.deb && test -x /opt/reaktivlar/bin/Reaktivlar'
       - name: Upload .deb
         uses: actions/upload-artifact@v4
         with:

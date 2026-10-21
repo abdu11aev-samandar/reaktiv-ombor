@@ -312,14 +312,19 @@ private fun AppContent(
         refocus()
     }
 
-    /** [id] null — oxiridagi “yangi qator”. [keepTab] — Tab bilan yurish davom etyapti. */
-    fun select(id: Long?, col: Col, edit: Boolean = false, keepTab: Boolean = false) {
+    /** [id] null — oxiridagi “yangi qator”. [keepTab] — Tab bilan yurish davom etyapti. Haqiqatan tanlangan katakni qaytaradi. */
+    fun select(id: Long?, col: Col, edit: Boolean = false, keepTab: Boolean = false): Pair<Long?, Col> {
+        // “Yangi qator”ga yozib turib shu qatorning boshqa katagi bosildi: tasdiqlash shu qatorni yaratadi — tanlov
+        // bo‘sh “yangi qator”ga emas, aynan shu qatorga qolsin (aks holda keyingi qiymat ikkinchi qatorga tushardi).
+        val typingNewRow = editing && selId == null
         commitEdit()
+        val created = if (typingNewRow) selId else null
         if (!keepTab) tabStartCol = null
-        selId = id?.takeIf { wanted -> state.rows.any { it.id == wanted } }
+        selId = if (id == null && created != null) created else id?.takeIf { wanted -> state.rows.any { it.id == wanted } }
         selCol = col
         editValue = TextFieldValue("")
         if (edit) startEditing() else refocus()
+        return selId to selCol
     }
 
     fun move(dRow: Int, dCol: Int, keepTab: Boolean = false) {
@@ -360,12 +365,17 @@ private fun AppContent(
     fun showChange(before: List<SheetRow>) {
         tabStartCol = null
         val (id, col) = changedSpot(before, state.rows) ?: return
+        // O‘zgargan hamma qator ko‘rinib tursin (bir nechta qatorli qo‘yish yoki almashtirish bekor qilinganda ham).
+        val old = before.associateBy { it.id }
+        val shown = freshVisible().mapTo(HashSet()) { it.id }
+        pinned = pinned + state.rows.filter { old[it.id] != it && it.id !in shown }.map { it.id }
         if (state.rows.none { it.id == id }) {
-            // Bekor qilingan yangi qator — tanlov oxiridagi “yangi qator”ga.
+            // Bekor qilingan yangi qator — tanlov “yangi qator”ning u yozila boshlagan katagiga (odatda nomi).
+            val removed = old[id]
             selId = null
+            selCol = Col.entries.firstOrNull { c -> c.editable && c != Col.UNIT && removed?.get(c)?.isNotBlank() == true } ?: Col.NAME
             return
         }
-        if (freshVisible().none { it.id == id }) pinned = pinned + id
         selId = id
         if (col != null) selCol = col
     }
@@ -398,7 +408,10 @@ private fun AppContent(
             freezeView()
             val before = state.rows.map { it.id }.toSet()
             val rows = freshVisible()
-            val monthFirst = DateText.isMonthFirst(clipboardDates(readClipboard(block), selCol))
+            val dates = clipboardDates(readClipboard(block), selCol)
+            val monthFirst = DateText.isMonthFirst(dates)
+            // AQSh formatidagi kompyuterda blok kun/oy deb o‘qildi (unda 25/10/2026 kabi sana bor) — buni ham aytamiz.
+            val dayFirstOnUsPc = DateText.pcMonthFirst && !monthFirst && dates.any(DateText::isAmbiguous)
             val count = state.paste(block, rows.map { it.id }, indexIn(rows), selCol)
             val created = state.rows.map { it.id }.filterNot { it in before }
             pinned = pinned + created
@@ -406,12 +419,17 @@ private fun AppContent(
             notice = when {
                 count == 0 -> Notice("Hech narsa o‘zgarmadi: nusxadagi qiymatlar jadvaldagi bilan bir xil yoki ularni bu ustunga qo‘yib bo‘lmaydi.", isError = true)
                 monthFirst -> Notice("$count qator qo‘yildi. Sanalar kompyuter sozlamasi bo‘yicha oy/kun/yil tartibida o‘qildi — tekshirib oling. Bekor qilish: Ctrl+Z.")
+                dayFirstOnUsPc -> Notice("$count qator qo‘yildi. Nusxada kun/oy/yil sana bor, shuning uchun sanalar kun/oy/yil tartibida o‘qildi — tekshirib oling. Bekor qilish: Ctrl+Z.")
                 else -> Notice("$count qator qo‘yildi. Bekor qilish: Ctrl+Z.")
             }
         } else if (selCol.editable) {
             val value = block.trim()
             val isDate = selCol == Col.RECEIVED || selCol == Col.EXPIRES
-            setCell(if (isDate && DateText.isMonthFirst(listOf(value))) DateText.fromMonthFirst(value) else value)
+            val converted = if (isDate && DateText.isMonthFirst(listOf(value))) DateText.fromMonthFirst(value) else value
+            setCell(converted)
+            if (converted != value && DateText.isAmbiguous(value)) {
+                notice = Notice("Sana kompyuter sozlamasi bo‘yicha oy/kun/yil deb o‘qildi: $value → ${displayDate(converted)}. Tekshirib oling. Bekor qilish: Ctrl+Z.")
+            }
         }
         refocus()
     }

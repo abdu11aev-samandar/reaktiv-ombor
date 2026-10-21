@@ -1,7 +1,11 @@
 package uz.reaktivombor.desktop
 
 import androidx.compose.ui.graphics.toAwtImage
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.platform.ClipboardManager
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onAllNodesWithText
@@ -286,6 +290,72 @@ class AppUiTest {
         waitForIdle()
         assertEquals("305", state.byName("Shavel kislota").stockAmount)
         assertEquals("20.12.2026", state.byName("Shavel kislota").expiresAt)
+    }
+
+    @Test
+    fun clickingAnotherCellOfTheNewRowKeepsTypingInThatRow() = runComposeUiTest {
+        val state = SheetState(SheetStore.fromJson(SAMPLE))
+        app(state)
+        onNodeWithText("Yangi qator").performClick()
+        type("Natriy")
+        onNodeWithTag("cell-new-B").performClick() // xuddi shu qatorning “Kelgan vaqt” katagi
+        waitForIdle()
+        type("01.10.2026", Key.Enter)
+        waitForIdle()
+        assertEquals("01.10.2026", state.byName("Natriy").receivedAt)
+        assertEquals(6, state.rows.size)
+    }
+
+    @Test
+    fun undoingANewRowAfterTabReturnsToItsFirstColumn() = runComposeUiTest {
+        val state = SheetState(SheetStore.fromJson(SAMPLE))
+        app(state)
+        onNodeWithText("Yangi qator").performClick()
+        type("Amiak", Key.Tab)
+        onNodeWithTag("cell-editor").performKeyInput { keyDown(Key.CtrlLeft); pressKey(Key.Z); keyUp(Key.CtrlLeft) }
+        waitForIdle()
+        type("Ammiak", Key.Enter)
+        waitForIdle()
+        assertEquals("", state.byName("Ammiak").receivedAt)
+        assertEquals(6, state.rows.size)
+    }
+
+    @Test
+    fun undoingAMultiRowPasteShowsEveryRestoredRowInTheFilter() = runComposeUiTest {
+        val reds = """
+            {"format":"reaktiv-ombor","version":1,"reagents":[
+              {"name":"Benzol","receivedAt":"2026-01-01","givenAmount":"1","unit":"ml","expiresAt":"2026-11-05","stockAmount":"10","createdAt":1},
+              {"name":"Toluol","receivedAt":"2026-01-01","givenAmount":"1","unit":"ml","expiresAt":"2026-10-10","stockAmount":"20","createdAt":2},
+              {"name":"Fenol","receivedAt":"2026-01-01","givenAmount":"1","unit":"ml","expiresAt":"2026-10-30","stockAmount":"30","createdAt":3}
+            ]}
+        """.trimIndent()
+        val state = SheetState(SheetStore.fromJson(reds))
+        val clipboard = object : ClipboardManager {
+            var content: AnnotatedString? = null
+            override fun getText(): AnnotatedString? = content
+            override fun setText(annotatedString: AnnotatedString) { content = annotatedString }
+        }
+        val store = SheetStore(tmp.root.toPath().resolve("reaktivlar.json"))
+        setContent {
+            CompositionLocalProvider(LocalClipboardManager provides clipboard) {
+                ReaktivlarApp(state, store, noDialogs, todayProvider = { today }, autoSave = false, refreshToday = false)
+            }
+        }
+        onNodeWithText("05.11.2026").performClick() // Benzol muddati
+        clipboard.content = AnnotatedString("05.11.2027\r\n10.10.2027\r\n")
+        onNodeWithTag("cell-editor").performKeyInput { keyDown(Key.CtrlLeft); pressKey(Key.V); keyUp(Key.CtrlLeft) }
+        waitForIdle()
+        onNodeWithText("1 oydan kam  1").performClick() // faqat Fenol
+        onNodeWithText("30").performClick()
+        type("70", Key.Enter) // ko‘rinish “muzlaydi”
+        repeat(2) {
+            onNodeWithTag("cell-editor").performKeyInput { keyDown(Key.CtrlLeft); pressKey(Key.Z); keyUp(Key.CtrlLeft) }
+            waitForIdle()
+        }
+        assertEquals("05.11.2026", state.byName("Benzol").expiresAt)
+        listOf("Benzol", "Toluol", "Fenol").forEach { name ->
+            assertTrue(name, onAllNodesWithText(name).fetchSemanticsNodes().isNotEmpty())
+        }
     }
 
     companion object {

@@ -62,6 +62,11 @@ object DateText {
         return sawSlash
     }
 
+    /** "3/10/2027" — kun/oy ham, oy/kun ham bo‘la oladi (ikkala qismi 12 dan oshmaydi va har xil). */
+    fun isAmbiguous(raw: String): Boolean = SLASH.matchEntire(raw.trim())?.destructured?.let { (first, second) ->
+        first.toInt() in 1..12 && second.toInt() in 1..12 && first.toInt() != second.toInt()
+    } ?: false
+
     /** "3/10/2027" (oy/kun/yil) → "10.3.2027". */
     fun fromMonthFirst(raw: String): String =
         SLASH.matchEntire(raw.trim())?.destructured?.let { (month, day, year) -> "$day.$month.$year" } ?: raw

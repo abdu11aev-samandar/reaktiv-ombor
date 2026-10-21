@@ -85,4 +85,13 @@ class SheetTest {
         assertEquals("10.3.2027", DateText.fromMonthFirst("3/10/2027"))
         assertEquals("17.10.2026", DateText.fromMonthFirst("17.10.2026"))
     }
+
+    @Test
+    fun ambiguousSlashDates() {
+        assertTrue(DateText.isAmbiguous("11/12/2026"))
+        assertTrue(DateText.isAmbiguous("3/4/26"))
+        assertFalse(DateText.isAmbiguous("10/25/2026"))
+        assertFalse(DateText.isAmbiguous("5/5/2026")) // ikki xil o‘qilishi bir xil
+        assertFalse(DateText.isAmbiguous("11.12.2026"))
+    }
 }

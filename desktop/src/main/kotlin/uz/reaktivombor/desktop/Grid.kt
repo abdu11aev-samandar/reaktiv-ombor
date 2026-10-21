@@ -141,7 +141,8 @@ fun SheetGrid(
     cellFocus: FocusRequester,
     // Qidiruv maydonida yozilayotganda yangi tanlangan katak fokusni o‘ziga tortib olmasin.
     autoFocus: Boolean,
-    onSelect: (rowId: Long?, col: Col, startEditing: Boolean) -> Unit,
+    // Haqiqatan tanlangan katakni qaytaradi (u bosilgan joydan farq qilishi mumkin — masalan, yangi yaratilgan qator).
+    onSelect: (rowId: Long?, col: Col, startEditing: Boolean) -> Pair<Long?, Col>,
     onEditValue: (TextFieldValue) -> Unit,
     onKey: (KeyEvent) -> Boolean,
     onFocusLost: () -> Unit,
@@ -158,7 +159,7 @@ fun SheetGrid(
 
     Box(modifier.background(SheetColors.Background)) {
         Column(Modifier.fillMaxSize().horizontalScroll(horizontal)) {
-            HeaderRow(selCol, sort, onSort)
+            HeaderRow(selCol, sort, onSort, lastPress) { (rowId, cellCol) -> onSelect(rowId, cellCol, true) }
             LazyColumn(
                 state = listState,
                 modifier = Modifier.width(totalWidth.dp).weight(1f),
@@ -213,7 +214,14 @@ fun SheetGrid(
 private const val HEADER_HEIGHT = 44
 
 @Composable
-private fun HeaderRow(selCol: Col, sort: Pair<Col, Boolean>?, onSort: (Col) -> Unit) {
+private fun HeaderRow(
+    selCol: Col,
+    sort: Pair<Col, Boolean>?,
+    onSort: (Col) -> Unit,
+    lastPress: LastPress,
+    onDoubleTap: (Pair<Long?, Col>) -> Unit,
+) {
+    val doubleTap by rememberUpdatedState(onDoubleTap)
     Row(Modifier.height(HEADER_HEIGHT.dp)) {
         Box(
             Modifier.width(ROW_HEADER_WIDTH.dp).fillMaxHeight().background(SheetColors.HeaderBg).gridLines(),
@@ -231,6 +239,24 @@ private fun HeaderRow(selCol: Col, sort: Pair<Col, Boolean>?, onSort: (Col) -> U
                     .fillMaxHeight()
                     .background(if (selected) SheetColors.HeaderSelected else SheetColors.HeaderBg)
                     .gridLines()
+                    // Katakni ikki marta bosishning ikkinchi bosishi sarlavhaga tushdi (birinchi bosish qizil ogohlantirishni
+                    // chiqarib, jadval pastga siljidi) — saralamaymiz, birinchi bosish tanlagan katakni ochamiz.
+                    .pointerInput(Unit) {
+                        awaitPointerEventScope {
+                            while (true) {
+                                val event = awaitPointerEvent(PointerEventPass.Initial)
+                                if (event.type != PointerEventType.Press) continue
+                                val now = event.changes.firstOrNull()?.uptimeMillis ?: 0L
+                                val previous = lastPress.cell?.takeIf { now - lastPress.at <= MULTI_CLICK_MS }
+                                lastPress.cell = null
+                                val clicks = event.awtEventOrNull?.clickCount ?: 1
+                                if (clicks >= 2 && previous != null && !event.buttons.isSecondaryPressed) {
+                                    event.changes.forEach { it.consume() }
+                                    doubleTap(previous)
+                                }
+                            }
+                        }
+                    }
                     .pointerInput(col) { detectTapGestures(onTap = { onSort(col) }) }
                     .semantics { contentDescription = "${col.title} ustuni bo‘yicha saralash" },
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -288,7 +314,7 @@ private fun DataCell(
     cellFocus: FocusRequester,
     autoFocus: Boolean,
     lastPress: LastPress,
-    onTap: () -> Unit,
+    onTap: () -> Pair<Long?, Col>,
     onDoubleTap: (Pair<Long?, Col>) -> Unit,
     onEditPress: () -> Unit,
     onEditValue: (TextFieldValue) -> Unit,
@@ -345,6 +371,7 @@ private fun DataCell(
             Modifier
                 .width(col.widthDp.dp)
                 .fillMaxHeight()
+                .testTag("cell-${row?.id ?: "new"}-${col.letter}")
                 // Xato fonini chiziqlar va qizil burchakdan oldin chizamiz — ular ko‘rinib tursin.
                 .then(if (error != null) Modifier.background(SheetColors.ErrorBg) else Modifier)
                 .gridLines()
@@ -368,9 +395,9 @@ private fun DataCell(
                                 lastPress.cell = null
                                 doubleTap(previous)
                             } else {
-                                lastPress.cell = here
+                                // Bosish tanlagan katak (bosilgan joy emas): “yangi qator”ga yozib turib bosilsa, bu yangi qator.
+                                lastPress.cell = tap()
                                 lastPress.at = now
-                                tap()
                             }
                         }
                     }
