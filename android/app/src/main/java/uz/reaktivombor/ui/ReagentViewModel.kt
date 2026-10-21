@@ -16,6 +16,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import uz.reaktivombor.data.AppDatabase
 import uz.reaktivombor.data.Reagent
+import uz.reaktivombor.data.toBackupItem
+import uz.reaktivombor.data.toReagent
 import uz.reaktivombor.domain.AlertStage
 import uz.reaktivombor.domain.Backup
 import uz.reaktivombor.domain.BackupException
@@ -100,7 +102,7 @@ class ReagentViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             val message = try {
                 val items = dao.getAll()
-                val json = Backup.toJson(items, LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME))
+                val json = Backup.toJson(items.map { it.toBackupItem() }, LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME))
                 withContext(Dispatchers.IO) {
                     val resolver = getApplication<Application>().contentResolver
                     // Ba’zi provayderlar (masalan, Google Drive) "wt" rejimini qo‘llamaydi.
@@ -137,8 +139,8 @@ class ReagentViewModel(app: Application) : AndroidViewModel(app) {
                         buffer.toString(Charsets.UTF_8.name())
                     }
                 }
-                val parsed = Backup.fromJson(text, LocalDate.now())
-                if (parsed.reagents.isEmpty()) {
+                val parsed = Backup.fromJson(text)
+                if (parsed.items.isEmpty()) {
                     _messages.emit("Zaxira faylida tiklanadigan reaktiv topilmadi.")
                 } else {
                     _pendingRestore.value = parsed
@@ -159,9 +161,10 @@ class ReagentViewModel(app: Application) : AndroidViewModel(app) {
         val parsed = _pendingRestore.value ?: return
         _pendingRestore.value = null
         viewModelScope.launch {
-            dao.replaceAll(parsed.reagents)
+            val today = LocalDate.now()
+            dao.replaceAll(parsed.items.map { it.toReagent(today) })
             val skipped = if (parsed.skipped > 0) " ${parsed.skipped} ta buzuq qator tashlab ketildi." else ""
-            _messages.emit("${parsed.reagents.size} ta reaktiv tiklandi.$skipped")
+            _messages.emit("${parsed.items.size} ta reaktiv tiklandi.$skipped")
         }
     }
 

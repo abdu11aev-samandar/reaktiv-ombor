@@ -152,7 +152,7 @@ private fun AppRoot(vm: ReagentViewModel = viewModel()) {
             text = {
                 val skipped = if (parsed.skipped > 0) " ${parsed.skipped} ta buzuq qator tashlab ketiladi." else ""
                 Text(
-                    "Fayldagi ${parsed.reagents.size} ta reaktiv tiklanadi. " +
+                    "Fayldagi ${parsed.items.size} ta reaktiv tiklanadi. " +
                         "Hozirgi ro‘yxat ($currentCount ta) o‘rniga yoziladi.$skipped",
                 )
             },

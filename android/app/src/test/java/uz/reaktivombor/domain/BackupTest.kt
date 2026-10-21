@@ -4,6 +4,8 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Test
 import uz.reaktivombor.data.Reagent
+import uz.reaktivombor.data.toBackupItem
+import uz.reaktivombor.data.toReagent
 import java.math.BigDecimal
 import java.time.LocalDate
 
@@ -17,14 +19,20 @@ class BackupTest {
 
     @Test
     fun roundTrip() {
-        val parsed = Backup.fromJson(Backup.toJson(reagents, "2026-10-16T10:00:00"), today)
+        val json = Backup.toJson(reagents.map { it.toBackupItem() }, "2026-10-16T10:00:00")
+        val parsed = Backup.fromJson(json)
         assertEquals(0, parsed.skipped)
-        assertEquals(listOf("Etil spirti", "Xloroform"), parsed.reagents.map { it.name })
-        assertEquals(BigDecimal("320.500"), parsed.reagents[1].stockAmount)
-        assertEquals(LocalDate.parse("2026-11-05"), parsed.reagents[1].expiresAt)
-        assertEquals(200L, parsed.reagents[1].createdAt)
-        // Tiklangan qatorlar uchun eski eslatma qayta kelmaydi.
-        assertEquals(AlertStage.RED.ordinal, parsed.reagents[1].notifiedStage)
+        assertEquals(listOf("Etil spirti", "Xloroform"), parsed.items.map { it.name })
+        assertEquals(BigDecimal("320.500"), parsed.items[1].stockAmount)
+        assertEquals(LocalDate.parse("2026-11-05"), parsed.items[1].expiresAt)
+        assertEquals(200L, parsed.items[1].createdAt)
+    }
+
+    @Test
+    fun restoredRowsDoNotRepeatOldAlerts() {
+        val restored = Backup.fromJson(Backup.toJson(reagents.map { it.toBackupItem() }, "x")).items.map { it.toReagent(today) }
+        assertEquals(AlertStage.NONE.ordinal, restored[0].notifiedStage)
+        assertEquals(AlertStage.RED.ordinal, restored[1].notifiedStage)
     }
 
     @Test
@@ -37,15 +45,15 @@ class BackupTest {
               "matn"
             ]}
         """.trimIndent()
-        val parsed = Backup.fromJson(json, today)
-        assertEquals(listOf("Ammiak"), parsed.reagents.map { it.name })
+        val parsed = Backup.fromJson(json)
+        assertEquals(listOf("Ammiak"), parsed.items.map { it.name })
         assertEquals(3, parsed.skipped)
     }
 
     @Test
     fun rejectsForeignFiles() {
-        assertThrows(BackupException::class.java) { Backup.fromJson("salom", today) }
-        assertThrows(BackupException::class.java) { Backup.fromJson("""{"format":"boshqa"}""", today) }
-        assertThrows(BackupException::class.java) { Backup.fromJson("""{"format":"reaktiv-ombor","version":99,"reagents":[]}""", today) }
+        assertThrows(BackupException::class.java) { Backup.fromJson("salom") }
+        assertThrows(BackupException::class.java) { Backup.fromJson("""{"format":"boshqa"}""") }
+        assertThrows(BackupException::class.java) { Backup.fromJson("""{"format":"reaktiv-ombor","version":99,"reagents":[]}""") }
     }
 }
