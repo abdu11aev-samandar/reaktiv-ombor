@@ -86,13 +86,19 @@ class SheetState(initial: List<SheetRow>, private val clock: () -> Long = System
      * Kerak bo‘lsa yangi qatorlar qo‘shiladi. [targetIds] — ko‘rinib turgan tartibdagi qatorlar (filtr/saralashga mos).
      * Haqiqatan o‘zgargan yoki qo‘shilgan qatorlar sonini qaytaradi.
      */
-    fun paste(text: String, targetIds: List<Long>, startIndex: Int, startCol: Col): Int {
-        val lines = parseClipboard(text.replace("\r\n", "\n").replace('\r', '\n').trimEnd('\n'))
+    fun paste(
+        text: String,
+        targetIds: List<Long>,
+        startIndex: Int,
+        startCol: Col,
+        pcMonthFirst: Boolean = DateText.pcMonthFirst,
+    ): Int {
+        val lines = readClipboard(text)
         if (lines.size == 1 && lines[0].all { it.isBlank() }) return 0
         val cols = Col.entries
         fun colAt(cellIndex: Int): Col? = cols.getOrNull(startCol.ordinal + cellIndex)
         fun isDate(col: Col?) = col == Col.RECEIVED || col == Col.EXPIRES
-        val monthFirst = DateText.isMonthFirst(lines.flatMap { cells -> cells.filterIndexed { i, _ -> isDate(colAt(i)) } })
+        val monthFirst = DateText.isMonthFirst(clipboardDates(lines, startCol), pcMonthFirst)
 
         val updated = rows.toMutableList()
         var touched = 0
@@ -126,6 +132,29 @@ class SheetState(initial: List<SheetRow>, private val clock: () -> Long = System
     private companion object {
         const val HISTORY = 200
     }
+}
+
+/** Nusxa (Windows/Mac/Linux qator oxirlari bilan) → qatorlar va kataklar. */
+fun readClipboard(text: String): List<List<String>> =
+    parseClipboard(text.replace("\r\n", "\n").replace('\r', '\n').trimEnd('\n'))
+
+/** Nusxaning [startCol] dan boshlab qo‘yilganda sana ustunlariga (B, E) tushadigan qiymatlari. */
+fun clipboardDates(lines: List<List<String>>, startCol: Col): List<String> = lines.flatMap { cells ->
+    cells.filterIndexed { i, _ -> Col.entries.getOrNull(startCol.ordinal + i).let { it == Col.RECEIVED || it == Col.EXPIRES } }
+}
+
+/**
+ * Ikki holat orasida o‘zgargan birinchi qator va (bitta katak o‘zgargan bo‘lsa) ustun.
+ * Bekor qilish/qaytarishdan keyin tanlov Excel’dagi kabi shu katakka qaytadi.
+ */
+fun changedSpot(before: List<SheetRow>, after: List<SheetRow>): Pair<Long, Col?>? {
+    val old = before.associateBy { it.id }
+    after.firstOrNull { old[it.id] != it }?.let { row ->
+        val previous = old[row.id] ?: return row.id to null
+        return row.id to Col.entries.filter { it.editable && previous[it] != row[it] }.singleOrNull()
+    }
+    val now = after.mapTo(HashSet()) { it.id }
+    return before.firstOrNull { it.id !in now }?.let { it.id to null }
 }
 
 /**

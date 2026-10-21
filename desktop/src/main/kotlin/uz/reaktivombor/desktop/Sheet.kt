@@ -9,6 +9,7 @@ import uz.reaktivombor.domain.ReagentValues
 import uz.reaktivombor.domain.Validation
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 /** Sanani yozish va o‘qish: 17.10.2026, 17/10/2026, 17-10-2026, 7.1.26 yoki 2026-10-17. */
 object DateText {
@@ -40,17 +41,25 @@ object DateText {
     private val SLASH = Regex("""(\d{1,2})/(\d{1,2})/(\d{4}|\d{2})""")
 
     /**
-     * Excel AQSh sozlamasida sanalarni oy/kun/yil (10/25/2026) ko‘rinishida nusxalaydi.
-     * Blokda faqat shunday o‘qiladigan sana bo‘lsa va kun/oy deb o‘qiladigani bo‘lmasa — blok oy/kun tartibida.
+     * Kompyuterning mintaqaviy formati “English (United States)” — Excel sanalarni oy/kun/yil (10/25/2026) qilib nusxalaydi.
+     * Dastur bilan CLDR mahalliy ma’lumotlari kelmaydi (shablon noto‘g‘ri chiqadi), shuning uchun mamlakatga qaraymiz.
      */
-    fun isMonthFirst(values: List<String>): Boolean {
-        var monthFirst = false
+    val pcMonthFirst: Boolean by lazy { Locale.getDefault(Locale.Category.FORMAT).country == "US" }
+
+    /**
+     * Nusxadagi “/” li sanalar oy/kun/yil tartibidami. Faqat AQSh formatidagi kompyuterda — boshqa kompyuterda Excel
+     * kun/oy beradi va bitta xato qiymat qolgan sanalarni o‘zgartirib yubormasligi kerak. Birinchi qismi 12 dan katta
+     * sana bo‘lsa (25/10/2026), blok baribir kun/oy.
+     */
+    fun isMonthFirst(values: List<String>, pcMonthFirst: Boolean = this.pcMonthFirst): Boolean {
+        if (!pcMonthFirst) return false
+        var sawSlash = false
         for (value in values) {
-            val (first, second) = SLASH.matchEntire(value.trim())?.destructured ?: continue
+            val (first) = SLASH.matchEntire(value.trim())?.destructured ?: continue
             if (first.toInt() > 12) return false
-            if (second.toInt() > 12) monthFirst = true
+            sawSlash = true
         }
-        return monthFirst
+        return sawSlash
     }
 
     /** "3/10/2027" (oy/kun/yil) → "10.3.2027". */

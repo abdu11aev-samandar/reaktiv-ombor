@@ -94,7 +94,7 @@ class SheetStateTest {
     @Test
     fun usDatesCopiedFromExcelAreReadMonthFirst() {
         val s = state()
-        s.paste("Xloroform\t8/10/2026\t500\tml\t11/5/2026\t320\nAmmiak\t9/30/2026\t1\tl\t3/1/2027\t1", emptyList(), 0, Col.NAME)
+        s.paste("Xloroform\t8/10/2026\t500\tml\t11/5/2026\t320\nAmmiak\t9/30/2026\t1\tl\t3/1/2027\t1", emptyList(), 0, Col.NAME, pcMonthFirst = true)
         assertEquals(listOf(LocalDate.parse("2026-08-10"), LocalDate.parse("2026-09-30")), s.rows.map { DateText.parse(it.receivedAt) })
         assertEquals(listOf(LocalDate.parse("2026-11-05"), LocalDate.parse("2027-03-01")), s.rows.map { DateText.parse(it.expiresAt) })
     }
@@ -110,5 +110,26 @@ class SheetStateTest {
         val next = SheetState(reloaded) { 1000L }
         next.setCell(null, Col.NAME, "D")
         assertEquals(listOf("A", "B", "C", "Telefon", "D"), SheetStore.parse(SheetStore.toJson(next.rows, "x")).rows.map { it.name })
+    }
+
+    @Test
+    fun oneTypoDoesNotFlipADayFirstBlock() {
+        val s = state()
+        val block = "Xloroform\t01/09/2026\t500\tml\t05/11/2026\t320\nNaftol-2\t02/06/2026\t100\tgr\t5/13/2027\t40"
+        s.paste(block, emptyList(), 0, Col.NAME, pcMonthFirst = false)
+        assertEquals(LocalDate.parse("2026-09-01"), DateText.parse(s.rows[0].receivedAt))
+        assertEquals(LocalDate.parse("2026-11-05"), DateText.parse(s.rows[0].expiresAt))
+        assertEquals(LocalDate.parse("2026-06-02"), DateText.parse(s.rows[1].receivedAt))
+    }
+
+    @Test
+    fun changedSpotPointsAtTheUndoneCell() {
+        val a = SheetRow(1, "A", "01.01.2026", createdAt = 1)
+        val b = SheetRow(2, "B", createdAt = 2)
+        assertEquals(2L to Col.STOCK, changedSpot(listOf(a, b), listOf(a, b.copy(stockAmount = "5"))))
+        assertEquals(2L to null, changedSpot(listOf(a), listOf(a, b))) // qaytgan (o‘chirilgan) qator
+        assertEquals(2L to null, changedSpot(listOf(a, b), listOf(a))) // bekor qilingan yangi qator
+        assertEquals(1L to null, changedSpot(listOf(a), listOf(a.copy(name = "X", receivedAt = ""))))
+        assertEquals(null, changedSpot(listOf(a), listOf(a)))
     }
 }

@@ -11,6 +11,8 @@ import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performKeyInput
+import androidx.compose.ui.test.assertIsFocused
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.doubleClick
@@ -210,6 +212,80 @@ class AppUiTest {
         onNodeWithText("kg").performClick()
         waitForIdle()
         assertEquals("kg", state.byName("Etil spirti").unit)
+    }
+
+    @Test
+    fun searchKeepsTheKeyboardWhileTyping() = runComposeUiTest {
+        val state = SheetState(SheetStore.fromJson(SAMPLE))
+        app(state)
+        onNodeWithTag("search").performClick()
+        // "n" tanlangan Etil spirti’ni yashiradi — yangi tanlangan katak fokusni tortib olmasligi kerak
+        // (aks holda keyingi harflar reaktiv nomiga yozilardi).
+        onNodeWithTag("search").performTextInput("n")
+        waitForIdle()
+        onNodeWithTag("search").assertIsFocused()
+        onNodeWithTag("search").performTextInput("af")
+        waitForIdle()
+        onNodeWithTag("search").assertIsFocused()
+        onNodeWithTag("search").assertTextEquals("naf")
+    }
+
+    @Test
+    fun switchingToAFilterWithTheSameCountMovesTheSelectionToAVisibleRow() = runComposeUiTest {
+        val state = SheetState(SheetStore.fromJson(SAMPLE))
+        app(state)
+        onNodeWithText("3 oydan ko‘p  1").performClick() // faqat Etil spirti
+        onNodeWithText("750").performClick()
+        onNodeWithText("1 – 3 oy  1").performClick() // faqat Shavel kislota
+        waitForIdle()
+        type("999", Key.Enter)
+        waitForIdle()
+        assertEquals("750", state.byName("Etil spirti").stockAmount)
+        assertEquals("999", state.byName("Shavel kislota").stockAmount)
+    }
+
+    @Test
+    fun undoKeepsTheSelectionOnTheUndoneCell() = runComposeUiTest {
+        val state = SheetState(SheetStore.fromJson(SAMPLE))
+        app(state)
+        onNodeWithText("Ko‘rsatish").performClick() // qizillar
+        onNodeWithText("05.11.2026").performClick()
+        type("05.11.2027", Key.Tab) // Xloroform qoldig‘i tanlandi
+        onNodeWithTag("cell-editor").key(Key.Delete) // tasodifan o‘chirildi
+        onNodeWithTag("cell-editor").performKeyInput { keyDown(Key.CtrlLeft); pressKey(Key.Z); keyUp(Key.CtrlLeft) }
+        waitForIdle()
+        type("300", Key.Enter)
+        waitForIdle()
+        assertEquals("300", state.byName("Xloroform").stockAmount)
+        assertEquals("40", state.byName("Naftol-2").stockAmount)
+    }
+
+    @Test
+    fun undoingANewRowDoesNotSendTheNextValueToRowOne() = runComposeUiTest {
+        val state = SheetState(SheetStore.fromJson(SAMPLE))
+        app(state)
+        onNodeWithText("Yangi qator").performClick()
+        type("Amiak", Key.Tab)
+        onNodeWithTag("cell-editor").performKeyInput { keyDown(Key.CtrlLeft); pressKey(Key.Z); keyUp(Key.CtrlLeft) }
+        waitForIdle()
+        type("30.09.2026", Key.Enter)
+        waitForIdle()
+        assertEquals("01.09.2026", state.byName("Etil spirti").receivedAt)
+        assertTrue(state.rows.none { it.name == "Amiak" })
+    }
+
+    @Test
+    fun f2WhileTypingLetsTheArrowsMoveInsideTheText() = runComposeUiTest {
+        val state = SheetState(SheetStore.fromJson(SAMPLE))
+        app(state)
+        onNodeWithText("180,5").performClick()
+        type("35")
+        onNodeWithTag("cell-editor").key(Key.F2)
+        onNodeWithTag("cell-editor").key(Key.DirectionLeft)
+        type("0", Key.Enter)
+        waitForIdle()
+        assertEquals("305", state.byName("Shavel kislota").stockAmount)
+        assertEquals("20.12.2026", state.byName("Shavel kislota").expiresAt)
     }
 
     companion object {

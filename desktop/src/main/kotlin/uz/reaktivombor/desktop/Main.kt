@@ -13,6 +13,7 @@ import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import java.awt.Desktop
 import java.awt.Dimension
+import java.awt.EventQueue
 import java.awt.FileDialog
 import java.awt.Frame
 import java.awt.GraphicsEnvironment
@@ -22,6 +23,8 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
 import java.nio.file.StandardOpenOption
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import javax.swing.JOptionPane
 
 /** Ikkita oyna bitta faylga yozib, bir-birini o‘chirib yubormasligi uchun. */
@@ -39,6 +42,21 @@ fun main() {
 
     val loaded = store.load()
     val state = SheetState(loaded.rows)
+
+    // Windows o‘chirilganda, qayta yuklanganda, foydalanuvchi chiqqanda yoki yangi MSI dasturni yopganda oynaga
+    // “yopilish” xabari kelmaydi: AWT buni SIGTERM qiladi va faqat shutdown hook’lar ishlaydi. Yozib turilgan katak ham saqlansin.
+    Runtime.getRuntime().addShutdownHook(Thread {
+        runCatching {
+            val flushed = CountDownLatch(1)
+            EventQueue.invokeLater {
+                runCatching { state.flushPendingEdit() }
+                flushed.countDown()
+            }
+            // Chegaralangan kutish: dastur qotib qolgan bo‘lsa ham Windows’ning o‘chishini to‘xtatmaymiz.
+            flushed.await(2, TimeUnit.SECONDS)
+            store.save(state.rows, state.revision)
+        }
+    })
 
     // Vazifalar paneli chiqarib tashlangan ekran maydoni. Oyna undan katta bo‘lsa, sarlavhasi ekrandan chiqib ketadi.
     val screen = GraphicsEnvironment.getLocalGraphicsEnvironment().maximumWindowBounds
@@ -58,7 +76,7 @@ fun main() {
             onCloseRequest = {
                 // Katakda yozib turilgan (Enter bosilmagan) qiymat ham saqlansin.
                 state.flushPendingEdit()
-                val error = runCatching { store.save(state.rows) }.exceptionOrNull()
+                val error = runCatching { store.save(state.rows, state.revision) }.exceptionOrNull()
                 if (error == null || confirmCloseWithoutSaving(error)) exitApplication()
             },
             title = "Reaktivlar hisobi",
@@ -80,7 +98,7 @@ private fun confirmCloseWithoutSaving(error: Throwable): Boolean {
         null,
         "Ma’lumotlarni saqlab bo‘lmadi:\n${error.message ?: error}\n\n" +
             "Hozir yopilsa, oxirgi o‘zgarishlar yo‘qoladi. Dasturni ochiq qoldirib,\n" +
-            "«Fayl» menyusi orqali boshqa joyga saqlab olishingiz mumkin.",
+            "«Fayl» → «Telefon uchun zaxira saqlash…» orqali boshqa joyga (masalan, fleshkaga) saqlab olishingiz mumkin.",
         "Reaktivlar hisobi",
         JOptionPane.DEFAULT_OPTION,
         JOptionPane.WARNING_MESSAGE,

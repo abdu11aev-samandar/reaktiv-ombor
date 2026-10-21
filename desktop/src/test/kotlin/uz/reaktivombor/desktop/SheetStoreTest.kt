@@ -123,4 +123,14 @@ class SheetStoreTest {
         assertEquals(first.map { it.name }, second.map { it.name })
         assertTrue(first.zipWithNext().all { (a, b) -> a.createdAt < b.createdAt })
     }
+
+    @Test
+    fun anOlderStateNeverOverwritesANewerOne() {
+        val store = SheetStore(tmp.root.toPath().resolve("reaktivlar.json"))
+        store.save(rows.take(3), revision = 5)
+        store.save(rows.take(1), revision = 3) // kechikkan fon saqlash
+        assertEquals(3, store.load().rows.size)
+        store.save(rows.take(2), revision = 6)
+        assertEquals(2, store.load().rows.size)
+    }
 }

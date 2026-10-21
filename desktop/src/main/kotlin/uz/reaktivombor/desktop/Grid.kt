@@ -73,6 +73,7 @@ import uz.reaktivombor.domain.Amounts
 import uz.reaktivombor.domain.ExpiryStatus
 import uz.reaktivombor.domain.daysUntil
 import uz.reaktivombor.domain.expiryHint
+import java.awt.Toolkit
 import java.time.LocalDate
 
 /** Excel’ga o‘xshash ranglar. */
@@ -108,6 +109,21 @@ const val ROW_HEIGHT = 30
 data class GridLine(val row: SheetRow?, val check: RowCheck?)
 
 /**
+ * Oxirgi bosish tanlagan katak. Ikki marta bosish shu katakni ochadi — kursor ostidagisini emas: birinchi bosish
+ * ro‘yxatni aylantirgan yoki qizil ogohlantirish yo‘qolib qatorlar siljigan bo‘lishi mumkin (tizim bosishlarni faqat
+ * ekrandagi joyi bo‘yicha sanaydi).
+ */
+class LastPress {
+    var cell: Pair<Long?, Col>? = null
+    var at = 0L
+}
+
+/** Windows’dagi ikki marta bosish oralig‘i (sozlamalardan), bo‘lmasa 500 ms. */
+private val MULTI_CLICK_MS: Long = runCatching {
+    Toolkit.getDefaultToolkit().getDesktopProperty("awt.multiClickInterval") as? Int
+}.getOrNull()?.toLong() ?: 500L
+
+/**
  * Jadval. Tanlangan katakda doim bitta (ko‘rinmas) matn maydoni turadi: shunda Excel’dagi kabi
  * katakni tanlab yozishni boshlash mumkin — birinchi harf eski qiymatni almashtiradi.
  */
@@ -123,16 +139,21 @@ fun SheetGrid(
     sort: Pair<Col, Boolean>?,
     listState: LazyListState,
     cellFocus: FocusRequester,
+    // Qidiruv maydonida yozilayotganda yangi tanlangan katak fokusni o‘ziga tortib olmasin.
+    autoFocus: Boolean,
     onSelect: (rowId: Long?, col: Col, startEditing: Boolean) -> Unit,
     onEditValue: (TextFieldValue) -> Unit,
     onKey: (KeyEvent) -> Boolean,
     onFocusLost: () -> Unit,
+    // Tahrirlanayotgan katak ichiga bosildi (Excel: kiritish rejimidan tahrirlash rejimiga).
+    onEditPress: () -> Unit,
     onSort: (Col) -> Unit,
     onRowMenu: (rowId: Long) -> Unit,
     onPickUnit: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val horizontal = rememberScrollState()
+    val lastPress = remember { LastPress() }
     val totalWidth = ROW_HEADER_WIDTH + Col.entries.sumOf { it.widthDp }
 
     Box(modifier.background(SheetColors.Background)) {
@@ -162,8 +183,11 @@ fun SheetGrid(
                                 editing = selected && editing,
                                 editValue = editValue,
                                 cellFocus = cellFocus,
+                                autoFocus = autoFocus,
+                                lastPress = lastPress,
                                 onTap = { onSelect(line.row?.id, col, false) },
-                                onDoubleTap = { onSelect(line.row?.id, col, true) },
+                                onDoubleTap = { (rowId, cellCol) -> onSelect(rowId, cellCol, true) },
+                                onEditPress = onEditPress,
                                 onEditValue = onEditValue,
                                 onKey = onKey,
                                 onFocusLost = onFocusLost,
@@ -262,8 +286,11 @@ private fun DataCell(
     editing: Boolean,
     editValue: TextFieldValue,
     cellFocus: FocusRequester,
+    autoFocus: Boolean,
+    lastPress: LastPress,
     onTap: () -> Unit,
-    onDoubleTap: () -> Unit,
+    onDoubleTap: (Pair<Long?, Col>) -> Unit,
+    onEditPress: () -> Unit,
     onEditValue: (TextFieldValue) -> Unit,
     onKey: (KeyEvent) -> Boolean,
     onFocusLost: () -> Unit,
@@ -309,7 +336,9 @@ private fun DataCell(
 
     val tap by rememberUpdatedState(onTap)
     val doubleTap by rememberUpdatedState(onDoubleTap)
+    val editPress by rememberUpdatedState(onEditPress)
     val editingHere by rememberUpdatedState(editing)
+    val here by rememberUpdatedState(row?.id to col)
 
     val cell: @Composable () -> Unit = {
         Box(
@@ -323,17 +352,26 @@ private fun DataCell(
                 // Katak tugma bosilgan zahoti tanlanadi (Excel’dagi kabi): darrov yozilgan matn shu katakka tushadi,
                 // avvalgisiga emas. Tahrirlanayotgan katak ichidagi bosishlar matn maydonining o‘ziga qoladi.
                 .pointerInput(Unit) {
-                    var lastPress = -1L
                     awaitPointerEventScope {
                         while (true) {
                             val event = awaitPointerEvent(PointerEventPass.Initial)
-                            if (event.type != PointerEventType.Press || editingHere) continue
+                            if (event.type != PointerEventType.Press) continue
+                            if (editingHere) {
+                                editPress()
+                                continue
+                            }
                             val now = event.changes.firstOrNull()?.uptimeMillis ?: 0L
+                            val previous = lastPress.cell?.takeIf { now - lastPress.at <= MULTI_CLICK_MS }
                             val clicks = event.awtEventOrNull?.clickCount
-                                ?: if (lastPress >= 0 && now - lastPress <= viewConfiguration.doubleTapTimeoutMillis) 2 else 1
-                            val double = clicks >= 2 && !event.buttons.isSecondaryPressed
-                            lastPress = if (double) -1L else now
-                            if (double) doubleTap() else tap()
+                                ?: if (previous == here && now - lastPress.at <= viewConfiguration.doubleTapTimeoutMillis) 2 else 1
+                            if (clicks >= 2 && previous != null && !event.buttons.isSecondaryPressed) {
+                                lastPress.cell = null
+                                doubleTap(previous)
+                            } else {
+                                lastPress.cell = here
+                                lastPress.at = now
+                                tap()
+                            }
                         }
                     }
                 },
@@ -362,6 +400,7 @@ private fun DataCell(
                     readOnly = !col.editable,
                     alignEnd = alignEnd,
                     focus = cellFocus,
+                    autoFocus = autoFocus,
                     onValue = onEditValue,
                     onKey = onKey,
                     onFocusLost = onFocusLost,
@@ -419,6 +458,7 @@ private fun CellEditor(
     readOnly: Boolean,
     alignEnd: Boolean,
     focus: FocusRequester,
+    autoFocus: Boolean,
     onValue: (TextFieldValue) -> Unit,
     onKey: (KeyEvent) -> Boolean,
     onFocusLost: () -> Unit,
@@ -456,7 +496,8 @@ private fun CellEditor(
                 .onPreviewKeyEvent(onKey),
         )
     }
-    LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+    val mayTakeFocus by rememberUpdatedState(autoFocus)
+    LaunchedEffect(Unit) { if (mayTakeFocus) runCatching { focus.requestFocus() } }
 }
 
 /** Katakning o‘ng va past chizig‘i (Excel to‘ri). */

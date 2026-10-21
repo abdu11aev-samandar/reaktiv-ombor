@@ -3,6 +3,7 @@ package uz.reaktivombor.desktop
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
@@ -54,6 +55,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.Key
@@ -80,7 +82,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import uz.reaktivombor.domain.Amounts
-import uz.reaktivombor.domain.Backup
 import uz.reaktivombor.domain.BackupException
 import uz.reaktivombor.domain.ExpiryStatus
 import java.nio.charset.StandardCharsets
@@ -193,6 +194,7 @@ private fun AppContent(
 
     val cellFocus = remember { FocusRequester() }
     val searchFocus = remember { FocusRequester() }
+    var searchFocused by remember { mutableStateOf(false) }
     var focusTick by remember { mutableIntStateOf(0) }
     LaunchedEffect(focusTick) { if (focusTick > 0) runCatching { cellFocus.requestFocus() } }
     val listState = rememberLazyListState()
@@ -213,17 +215,26 @@ private fun AppContent(
     val counts = state.rows.mapNotNull { checks.getValue(it.id).status(today) }.groupingBy { it }.eachCount()
     val draftCount = state.rows.count { !it.isBlank && !checks.getValue(it.id).complete }
 
-    // Tanlangan qator yo‘qolsa (o‘chirildi, filtrlandi) — yaqinidagisini tanlaymiz.
-    LaunchedEffect(lines.size, selId) {
-        if (selId != null && lines.none { it.row?.id == selId }) selId = lines.firstOrNull()?.row?.id
+    // Tanlangan qator ko‘rinishdan chiqsa (o‘chirildi, boshqa filtr) — ko‘rinib turganini tanlaymiz. Qatorlar soniga emas,
+    // ularning o‘ziga qaraymiz: soni bir xil boshqa filtrda tanlov yashirin qatorda qolib, yozuv unga tushmasin.
+    val visibleIds = lines.map { it.row?.id }
+    LaunchedEffect(visibleIds, selId) {
+        if (selId != null && selId !in visibleIds) selId = visibleIds.firstOrNull()
     }
-    // Tanlangan qator ko‘rinib tursin.
+    // Tanlangan qator ko‘rinib tursin — faqat kerakli darajada aylantiramiz (qisman ko‘ringan qatorni bosganda
+    // ro‘yxat sakramasin).
     LaunchedEffect(selIndex) {
         val info = listState.layoutInfo
-        val visibleItems = info.visibleItemsInfo
-        val first = visibleItems.firstOrNull()?.index ?: 0
-        val last = visibleItems.lastOrNull()?.index ?: 0
-        if (selIndex < first || selIndex >= last) listState.scrollToItem((selIndex - 3).coerceAtLeast(0))
+        val items = info.visibleItemsInfo
+        if (items.isEmpty()) return@LaunchedEffect
+        val item = items.firstOrNull { it.index == selIndex }
+        val end = info.viewportEndOffset - info.afterContentPadding
+        when {
+            item == null && selIndex < items.first().index -> listState.scrollToItem(selIndex)
+            item == null -> listState.scrollToItem((selIndex - items.size + 2).coerceAtLeast(0))
+            item.offset < 0 -> listState.scrollBy(item.offset.toFloat())
+            item.offset + item.size > end -> listState.scrollBy((item.offset + item.size - end).toFloat())
+        }
     }
 
     // ---------- Avtomatik saqlash ----------
@@ -232,7 +243,7 @@ private fun AppContent(
         delay(400)
         val revision = state.revision
         val snapshot = state.rows
-        val result = withContext(Dispatchers.IO) { runCatching { store.save(snapshot) } }
+        val result = withContext(Dispatchers.IO) { runCatching { store.save(snapshot, revision) } }
         if (result.isSuccess) {
             savedRevision = revision
             saveError = false
@@ -273,6 +284,8 @@ private fun AppContent(
         editing = false
         typedOver = false
         var value = editValue.text.trim()
+        // Eski matn keyingi katakdagi yozuv oldiga tushib qolmasin.
+        editValue = TextFieldValue("")
         if (selCol == Col.UNIT && value.isNotEmpty()) {
             // "m" → "ml", "k" → "kg" — bitta mos birlik bo‘lsa to‘ldiramiz.
             val normalized = normalizeUnit(value)
@@ -340,10 +353,28 @@ private fun AppContent(
         refocus()
     }
 
+    /**
+     * Bekor qilish/qayta bajarishdan keyin — Excel’dagi kabi — tanlov o‘zgargan katakka qaytadi va u ko‘rinib turadi
+     * (filtrga mos kelmasa ham). Aks holda tanlov boshqa qatorga o‘tib, keyingi yozuv begona reaktivga tushardi.
+     */
+    fun showChange(before: List<SheetRow>) {
+        tabStartCol = null
+        val (id, col) = changedSpot(before, state.rows) ?: return
+        if (state.rows.none { it.id == id }) {
+            // Bekor qilingan yangi qator — tanlov oxiridagi “yangi qator”ga.
+            selId = null
+            return
+        }
+        if (freshVisible().none { it.id == id }) pinned = pinned + id
+        selId = id
+        if (col != null) selCol = col
+    }
+
     fun undo() {
         cancelEdit()
+        val before = state.rows
         if (state.undo()) {
-            frozen = null
+            showChange(before)
             notice = Notice("Oxirgi o‘zgarish bekor qilindi.")
         }
         refocus()
@@ -351,8 +382,9 @@ private fun AppContent(
 
     fun redo() {
         cancelEdit()
+        val before = state.rows
         if (state.redo()) {
-            frozen = null
+            showChange(before)
             notice = Notice("O‘zgarish qayta bajarildi.")
         }
         refocus()
@@ -366,14 +398,15 @@ private fun AppContent(
             freezeView()
             val before = state.rows.map { it.id }.toSet()
             val rows = freshVisible()
+            val monthFirst = DateText.isMonthFirst(clipboardDates(readClipboard(block), selCol))
             val count = state.paste(block, rows.map { it.id }, indexIn(rows), selCol)
             val created = state.rows.map { it.id }.filterNot { it in before }
             pinned = pinned + created
             if (selId == null) selId = created.firstOrNull()
-            notice = if (count == 0) {
-                Notice("Hech narsa o‘zgarmadi: nusxadagi qiymatlar jadvaldagi bilan bir xil yoki ularni bu ustunga qo‘yib bo‘lmaydi.", isError = true)
-            } else {
-                Notice("$count qator qo‘yildi. Bekor qilish: Ctrl+Z.")
+            notice = when {
+                count == 0 -> Notice("Hech narsa o‘zgarmadi: nusxadagi qiymatlar jadvaldagi bilan bir xil yoki ularni bu ustunga qo‘yib bo‘lmaydi.", isError = true)
+                monthFirst -> Notice("$count qator qo‘yildi. Sanalar kompyuter sozlamasi bo‘yicha oy/kun/yil tartibida o‘qildi — tekshirib oling. Bekor qilish: Ctrl+Z.")
+                else -> Notice("$count qator qo‘yildi. Bekor qilish: Ctrl+Z.")
             }
         } else if (selCol.editable) {
             val value = block.trim()
@@ -395,6 +428,8 @@ private fun AppContent(
                 Key.Escape -> { cancelEdit(); refocus(); true }
                 Key.DirectionUp -> { move(-1, 0); true }
                 Key.DirectionDown -> { move(1, 0); true }
+                // Excel: F2 — matn ichida yurish rejimi (strelkalar katakdan chiqarmaydi).
+                Key.F2 -> { typedOver = false; true }
                 Key.DirectionLeft -> if (typedOver) { move(0, -1); true } else false
                 Key.DirectionRight -> if (typedOver) { move(0, 1); true } else false
                 else -> false
@@ -479,17 +514,19 @@ private fun AppContent(
     fun exportBackup() {
         commitEdit()
         val path = dialogs.saveFile("Telefon uchun zaxira nusxa", "reaktivlar-zaxira-${todayProvider()}.json") ?: return
-        val items = state.rows.mapNotNull { it.toBackupItem() }
-        val skipped = state.rows.count { !it.isBlank } - items.size
+        val rows = state.rows
+        val items = rows.mapNotNull { it.toBackupItem() }
+        val skipped = rows.count { !it.isBlank } - items.size
         scope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
-                    Files.writeString(path, Backup.toJson(items, LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)), StandardCharsets.UTF_8)
+                    // Tugallanmagan qatorlar ham ("drafts"): telefon ularni o‘qimaydi, kompyuterda ochilsa tiklanadi.
+                    Files.writeString(path, SheetStore.toJson(rows, LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)), StandardCharsets.UTF_8)
                 }
             }
             notice = result.fold(
                 onSuccess = {
-                    val extra = if (skipped > 0) " Tugallanmagan $skipped ta qator kiritilmadi." else ""
+                    val extra = if (skipped > 0) " Tugallanmagan $skipped ta qator ham saqlandi (telefonga o‘tmaydi, kompyuterda ochilsa tiklanadi)." else ""
                     Notice("Zaxira saqlandi: ${items.size} ta reaktiv.$extra Telefonda: ⋮ → «Zaxiradan tiklash».")
                 },
                 onFailure = { Notice("Faylni saqlab bo‘lmadi: ${it.message}", isError = true) },
@@ -518,8 +555,9 @@ private fun AppContent(
             search = search,
             onSearch = { search = it; viewChanged() },
             searchFocus = searchFocus,
+            onSearchFocus = { searchFocused = it },
             filter = filter,
-            onFilter = { filter = it; viewChanged(); refocus() },
+            onFilter = { commitEdit(); filter = it; viewChanged(); refocus() },
             counts = counts,
             total = state.rows.count { !it.isBlank },
             draftCount = draftCount,
@@ -549,7 +587,7 @@ private fun AppContent(
             Banner(
                 text = "$red ta reaktivning muddati 1 oydan kam qoldi yoki o‘tib ketgan.",
                 action = "Ko‘rsatish",
-                onAction = { filter = Filter.RED; viewChanged(); refocus() },
+                onAction = { commitEdit(); filter = Filter.RED; viewChanged(); refocus() },
                 warning = true,
             )
         }
@@ -584,10 +622,13 @@ private fun AppContent(
             sort = sort,
             listState = listState,
             cellFocus = cellFocus,
+            autoFocus = !searchFocused,
             onSelect = { id, col, edit -> select(id, col, edit) },
             onEditValue = ::onEditValue,
             onKey = ::handleKey,
             onFocusLost = { commitEdit() },
+            // Yozib turgan katak ichiga bosildi — xatoni tuzatish uchun: strelkalar endi matn ichida yuradi.
+            onEditPress = { typedOver = false },
             onSort = { col ->
                 commitEdit()
                 sort = when {
@@ -721,6 +762,7 @@ private fun Toolbar(
     search: String,
     onSearch: (String) -> Unit,
     searchFocus: FocusRequester,
+    onSearchFocus: (Boolean) -> Unit,
     filter: Filter,
     onFilter: (Filter) -> Unit,
     counts: Map<ExpiryStatus, Int>,
@@ -780,7 +822,7 @@ private fun Toolbar(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            SearchBox(search, onSearch, searchFocus)
+            SearchBox(search, onSearch, searchFocus, onSearchFocus)
             Spacer(Modifier.width(4.dp))
             Filter.entries.forEach { option ->
                 val count = when (option) {
@@ -808,7 +850,7 @@ private fun Toolbar(
 }
 
 @Composable
-private fun SearchBox(value: String, onValue: (String) -> Unit, focus: FocusRequester) {
+private fun SearchBox(value: String, onValue: (String) -> Unit, focus: FocusRequester, onFocus: (Boolean) -> Unit) {
     Row(
         Modifier
             .width(280.dp)
@@ -828,7 +870,7 @@ private fun SearchBox(value: String, onValue: (String) -> Unit, focus: FocusRequ
                 singleLine = true,
                 textStyle = TextStyle(fontSize = 13.sp, color = SheetColors.Text),
                 cursorBrush = SolidColor(SheetColors.Text),
-                modifier = Modifier.fillMaxWidth().focusRequester(focus).testTag("search").onPreviewKeyEvent { e ->
+                modifier = Modifier.fillMaxWidth().focusRequester(focus).onFocusChanged { onFocus(it.isFocused) }.testTag("search").onPreviewKeyEvent { e ->
                     if (e.type == KeyEventType.KeyDown && e.key == Key.Escape) { onValue(""); true } else false
                 },
             )

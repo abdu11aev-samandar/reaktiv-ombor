@@ -46,9 +46,15 @@ class SheetStore(val file: Path) {
         }
     }
 
-    /** Avtomatik saqlash (fon oqimi) va oyna yopilishidagi saqlash bir vaqtda kelishi mumkin — navbat bilan. */
+    private var savedRevision = Int.MIN_VALUE
+
+    /**
+     * Avtomatik saqlash (fon oqimi) va oyna yopilishidagi saqlash bir vaqtda kelishi mumkin — navbat bilan.
+     * [revision] — jadval holatining raqami (SheetState.revision): kechikib qolgan eskiroq holat yangisining ustidan yozilmaydi.
+     */
     @Synchronized
-    fun save(rows: List<SheetRow>) {
+    fun save(rows: List<SheetRow>, revision: Int? = null) {
+        if (revision != null && revision <= savedRevision) return
         Files.createDirectories(file.parent)
         val json = toJson(rows, LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME))
         val temp = file.resolveSibling(file.fileName.toString() + ".tmp")
@@ -60,6 +66,7 @@ class SheetStore(val file: Path) {
         } catch (e: java.nio.file.AtomicMoveNotSupportedException) {
             Files.move(temp, file, StandardCopyOption.REPLACE_EXISTING)
         }
+        if (revision != null) savedRevision = revision
     }
 
     private fun read(path: Path): List<SheetRow> = fromJson(Files.readString(path, StandardCharsets.UTF_8))

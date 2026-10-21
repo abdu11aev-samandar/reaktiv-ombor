@@ -74,12 +74,14 @@ class SheetTest {
     }
 
     @Test
-    fun monthFirstIsDetectedFromTheWholeBlock() {
-        assertTrue(DateText.isMonthFirst(listOf("10/25/2026", "3/10/2027", "")))
-        assertFalse(DateText.isMonthFirst(listOf("25/10/2026", "3/10/2027")))
-        assertFalse(DateText.isMonthFirst(listOf("3/10/2027")))
-        assertFalse(DateText.isMonthFirst(listOf("10/25/2026", "25/10/2026")))
-        assertFalse(DateText.isMonthFirst(listOf("10.25.2026")))
+    fun monthFirstFollowsTheComputersRegionalFormat() {
+        // AQSh formatidagi kompyuter: Excel oy/kun beradi — kun/oy ekani aniq bo‘lmasa, oy/kun.
+        assertTrue(DateText.isMonthFirst(listOf("10/25/2026", "3/10/2027", ""), pcMonthFirst = true))
+        assertTrue(DateText.isMonthFirst(listOf("3/10/2027"), pcMonthFirst = true))
+        assertFalse(DateText.isMonthFirst(listOf("25/10/2026", "3/10/2027"), pcMonthFirst = true))
+        assertFalse(DateText.isMonthFirst(listOf("10.25.2026"), pcMonthFirst = true))
+        // Boshqa kompyuter: hech qachon butun blok aylantirilmaydi (bitta xato qiymat qolganlarini buzmasin).
+        assertFalse(DateText.isMonthFirst(listOf("05/11/2026", "5/13/2027"), pcMonthFirst = false))
         assertEquals("10.3.2027", DateText.fromMonthFirst("3/10/2027"))
         assertEquals("17.10.2026", DateText.fromMonthFirst("17.10.2026"))
     }
