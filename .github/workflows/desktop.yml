@@ -52,7 +52,11 @@ jobs:
           java-version: '17'
       - uses: gradle/actions/setup-gradle@v4
       - name: Build MSI installer and portable app
-        run: ./gradlew --no-daemon packageMsi createDistributable
+        run: |
+          # Har yig'ish yangi versiya: aks holda yangi MSI eskisining ustiga o'rnatilmaydi (Windows Installer 1638).
+          if [[ "$GITHUB_REF" == refs/tags/desktop-v* ]]; then V="${GITHUB_REF_NAME#desktop-v}"; else V="1.0.${{ github.run_number }}"; fi
+          echo "Versiya: $V"
+          ./gradlew --no-daemon packageMsi createDistributable -PappVersion="$V"
       - name: Check bundled runtime (no app-local UCRT)
         run: |
           ls build/compose/binaries/main/app/Reaktivlar/runtime/bin

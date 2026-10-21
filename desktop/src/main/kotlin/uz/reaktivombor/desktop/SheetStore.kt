@@ -46,12 +46,15 @@ class SheetStore(val file: Path) {
         }
     }
 
+    /** Avtomatik saqlash (fon oqimi) va oyna yopilishidagi saqlash bir vaqtda kelishi mumkin — navbat bilan. */
+    @Synchronized
     fun save(rows: List<SheetRow>) {
         Files.createDirectories(file.parent)
         val json = toJson(rows, LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME))
         val temp = file.resolveSibling(file.fileName.toString() + ".tmp")
         Files.writeString(temp, json, StandardCharsets.UTF_8)
-        if (Files.exists(file)) Files.copy(file, backupFile, StandardCopyOption.REPLACE_EXISTING)
+        // Oldingi holat nusxasi — imkon bo‘lsa. U yozilmasa ham (band, faqat o‘qish uchun) asosiy fayl saqlanadi.
+        runCatching { if (Files.exists(file)) Files.copy(file, backupFile, StandardCopyOption.REPLACE_EXISTING) }
         try {
             Files.move(temp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
         } catch (e: java.nio.file.AtomicMoveNotSupportedException) {
@@ -121,9 +124,15 @@ class SheetStore(val file: Path) {
                     )
                 }
             }
+            // Bir xil vaqtli qatorlar keyingi saqlash–ochishda o‘rin almashmasin: vaqtlar qat’iy o‘sadigan qilinadi.
+            var last = Long.MIN_VALUE
             val ordered = rows.withIndex()
                 .sortedWith(compareBy({ it.value.first }, { it.index }))
-                .mapIndexed { index, item -> item.value.second.copy(id = index + 1L) }
+                .mapIndexed { index, item ->
+                    val createdAt = if (item.value.first > last) item.value.first else last + 1
+                    last = createdAt
+                    item.value.second.copy(id = index + 1L, createdAt = createdAt)
+                }
             return Parsed(ordered, parsed.skipped)
         }
 

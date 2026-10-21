@@ -2,6 +2,7 @@ package uz.reaktivombor.desktop
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.TooltipArea
+import androidx.compose.foundation.HorizontalScrollbar
 import androidx.compose.foundation.TooltipPlacement
 import androidx.compose.foundation.VerticalScrollbar
 import androidx.compose.foundation.background
@@ -11,6 +12,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -34,9 +36,12 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.awt.awtEventOrNull
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -47,6 +52,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.input.pointer.pointerInput
@@ -132,7 +138,12 @@ fun SheetGrid(
     Box(modifier.background(SheetColors.Background)) {
         Column(Modifier.fillMaxSize().horizontalScroll(horizontal)) {
             HeaderRow(selCol, sort, onSort)
-            LazyColumn(state = listState, modifier = Modifier.width(totalWidth.dp).weight(1f)) {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.width(totalWidth.dp).weight(1f),
+                // Pastdagi gorizontal aylantirish chizig‘i oxirgi qatorni yopmasin.
+                contentPadding = PaddingValues(bottom = 12.dp),
+            ) {
                 itemsIndexed(lines, key = { _, line -> line.row?.id ?: -1L }) { index, line ->
                     Row(Modifier.height(ROW_HEIGHT.dp).background(if (line.row != null && line.check?.complete == false) SheetColors.DraftRow else SheetColors.Background)) {
                         RowHeaderCell(
@@ -166,6 +177,11 @@ fun SheetGrid(
         VerticalScrollbar(
             adapter = rememberScrollbarAdapter(listState),
             modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight().padding(top = (HEADER_HEIGHT).dp),
+        )
+        // Oyna tor bo‘lsa (kichik ekran, 125% masshtab) o‘ngdagi ustunlarga yetish uchun.
+        HorizontalScrollbar(
+            adapter = rememberScrollbarAdapter(horizontal),
+            modifier = Modifier.align(Alignment.BottomStart).fillMaxWidth(),
         )
     }
 }
@@ -258,11 +274,8 @@ private fun DataCell(
     val status = check?.status(today)
     val error = if (row != null && !row.isBlank) check?.error(col) else null
 
-    val (fill, textColor) = when {
-        col == Col.NAME && status != null -> SheetColors.pill.getValue(status)
-        error != null -> SheetColors.ErrorBg to SheetColors.Text
-        else -> Color.Transparent to SheetColors.Text
-    }
+    val pill = if (col == Col.NAME && status != null) SheetColors.pill.getValue(status) else null
+    val textColor = pill?.second ?: SheetColors.Text
 
     val display: String
     var displayColor = textColor
@@ -294,23 +307,40 @@ private fun DataCell(
     }
     val alignEnd = col == Col.GIVEN || col == Col.STOCK || col == Col.RECEIVED || col == Col.EXPIRES
 
+    val tap by rememberUpdatedState(onTap)
+    val doubleTap by rememberUpdatedState(onDoubleTap)
+    val editingHere by rememberUpdatedState(editing)
+
     val cell: @Composable () -> Unit = {
         Box(
             Modifier
                 .width(col.widthDp.dp)
                 .fillMaxHeight()
+                // Xato fonini chiziqlar va qizil burchakdan oldin chizamiz — ular ko‘rinib tursin.
+                .then(if (error != null) Modifier.background(SheetColors.ErrorBg) else Modifier)
                 .gridLines()
                 .then(if (error != null) Modifier.errorCorner() else Modifier)
-                .pointerInput(onTap, onDoubleTap) { detectTapGestures(onTap = { onTap() }, onDoubleTap = { onDoubleTap() }) },
+                // Katak tugma bosilgan zahoti tanlanadi (Excel’dagi kabi): darrov yozilgan matn shu katakka tushadi,
+                // avvalgisiga emas. Tahrirlanayotgan katak ichidagi bosishlar matn maydonining o‘ziga qoladi.
+                .pointerInput(Unit) {
+                    var lastPress = -1L
+                    awaitPointerEventScope {
+                        while (true) {
+                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                            if (event.type != PointerEventType.Press || editingHere) continue
+                            val now = event.changes.firstOrNull()?.uptimeMillis ?: 0L
+                            val clicks = event.awtEventOrNull?.clickCount
+                                ?: if (lastPress >= 0 && now - lastPress <= viewConfiguration.doubleTapTimeoutMillis) 2 else 1
+                            val double = clicks >= 2 && !event.buttons.isSecondaryPressed
+                            lastPress = if (double) -1L else now
+                            if (double) doubleTap() else tap()
+                        }
+                    }
+                },
             contentAlignment = if (alignEnd) Alignment.CenterEnd else Alignment.CenterStart,
         ) {
-            if (fill != Color.Transparent) {
-                Box(
-                    Modifier
-                        .fillMaxSize()
-                        .padding(if (col == Col.NAME && status != null) 3.dp else 0.dp)
-                        .background(fill, RoundedCornerShape(if (col == Col.NAME && status != null) 4.dp else 0.dp)),
-                )
+            if (pill != null) {
+                Box(Modifier.fillMaxSize().padding(3.dp).background(pill.first, RoundedCornerShape(4.dp)))
             }
             if (!editing) {
                 Text(
@@ -336,7 +366,14 @@ private fun DataCell(
                     onKey = onKey,
                     onFocusLost = onFocusLost,
                 )
-                Box(Modifier.matchParentSize().border(2.dp, SheetColors.Accent))
+                // Ramka. Tahrirlanmayotganda yashirin matn maydonini sichqonchadan to‘sadi: ikki marta bosish
+                // tahrirni ochadi, maydon esa bo‘sh qiymat bilan uning matnini o‘chirib yubormaydi.
+                Box(
+                    Modifier
+                        .matchParentSize()
+                        .border(2.dp, SheetColors.Accent)
+                        .then(if (editing) Modifier else Modifier.pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent() } }),
+                )
                 if (col == Col.UNIT && editing) {
                     DropdownMenu(
                         expanded = true,
@@ -344,11 +381,12 @@ private fun DataCell(
                         offset = DpOffset(0.dp, 2.dp),
                         properties = PopupProperties(focusable = false),
                     ) {
-                        Amounts.UNITS.filter { it.startsWith(editValue.text.trim().lowercase()) || editValue.text.isBlank() }
-                            .ifEmpty { Amounts.UNITS }
-                            .forEach { unit ->
-                                DropdownMenuItem(text = { Text(unit) }, onClick = { onPickUnit(unit) })
-                            }
+                        // F2 / ikki marta bosilganda (matn — hozirgi birlik) hammasi; yozilganda — mos keladiganlari.
+                        val typed = editValue.text.trim().lowercase()
+                        val options = if (typed.isEmpty() || typed == row?.unit) Amounts.UNITS else Amounts.UNITS.filter { it.startsWith(typed) }
+                        options.ifEmpty { Amounts.UNITS }.forEach { unit ->
+                            DropdownMenuItem(text = { Text(unit) }, onClick = { onPickUnit(unit) })
+                        }
                     }
                 }
             }
@@ -385,6 +423,8 @@ private fun CellEditor(
     onKey: (KeyEvent) -> Boolean,
     onFocusLost: () -> Unit,
 ) {
+    // Yangi maydon birinchi marta “fokus yo‘q” deb xabar beradi — bu tahrirni yopib qo‘ymasin.
+    val hadFocus = remember { booleanArrayOf(false) }
     val hiddenSelection = remember { TextSelectionColors(handleColor = Color.Transparent, backgroundColor = Color.Transparent) }
     val visibleSelection = remember { TextSelectionColors(handleColor = SheetColors.Accent, backgroundColor = Color(0x551D4ED8)) }
     CompositionLocalProvider(LocalTextSelectionColors provides if (editing) visibleSelection else hiddenSelection) {
@@ -405,7 +445,14 @@ private fun CellEditor(
                 .background(if (editing) Color.White else Color.Transparent)
                 .focusRequester(focus)
                 .testTag("cell-editor")
-                .onFocusChanged { if (!it.isFocused) onFocusLost() }
+                .onFocusChanged {
+                    if (it.isFocused) {
+                        hadFocus[0] = true
+                    } else if (hadFocus[0]) {
+                        hadFocus[0] = false
+                        onFocusLost()
+                    }
+                }
                 .onPreviewKeyEvent(onKey),
         )
     }

@@ -122,8 +122,9 @@ Kalit topilmasa, APK sinov (debug) kaliti bilan imzolanadi — bunday faylni sin
 
 `desktop/` papkada kompyuter uchun dastur bor (Kotlin, Compose Desktop). Ekrani **Excel jadvaliga o‘xshaydi**, internet kerak emas.
 
-- Kataklarga to‘g‘ridan-to‘g‘ri yoziladi: **Enter** — tahrirlash/keyingi qator, **Tab** — o‘ngga, strelkalar — yurish, **Esc** — bekor qilish, **Delete** — katakni tozalash
-- **Ctrl+Z / Ctrl+Y** — bekor qilish / qaytarish, **Ctrl+C / Ctrl+V** — nusxa olish / qo‘yish (Excel’dan bir nechta qatorni birdaniga qo‘yish mumkin), **Ctrl+;** — bugungi sana, **Ctrl+F** — qidiruv, **Ctrl+−** — qatorni o‘chirish
+- Kataklarga to‘g‘ridan-to‘g‘ri yoziladi (Excel’dagi kabi): **Enter** — keyingi qator (Tab bilan yurilgan bo‘lsa — qator boshidagi ustunga), **Tab** — o‘ngga, strelkalar — yurish, **F2** yoki ikki marta bosish — katakni tahrirlash, **Esc** — bekor qilish, **Delete** — katakni tozalash
+- Filtr, qidiruv yoki saralash yoqilganda tahrirlangan qator joyida qoladi (ro‘yxat filtr qayta tanlanganda yangilanadi)
+- **Ctrl+Z / Ctrl+Y** — bekor qilish / qayta bajarish, **Ctrl+C / Ctrl+V** — nusxa olish / qo‘yish (Excel’dan bir nechta qatorni birdaniga qo‘yish mumkin), **Ctrl+;** — bugungi sana, **Ctrl+F** — qidiruv, **Ctrl+−** — qatorni o‘chirish
 - Ustun sarlavhasini bosish — saralash (▲/▼), rang bo‘yicha filtr, nom bo‘yicha qidiruv
 - Reaktiv nomi muddatga qarab bo‘yaladi (telefon va web ilovadagi bilan bir xil qoida); hali to‘ldirilmagan qator sariq fonda, yetishmayotgan kataklar qizil — sichqoncha bilan ustiga borilsa sababi chiqadi
 - Har bir o‘zgarish avtomatik saqlanadi: `%APPDATA%\Reaktivlar\reaktivlar.json` (oldingi holat — `reaktivlar.bak.json`)
@@ -132,7 +133,7 @@ Kalit topilmasa, APK sinov (debug) kaliti bilan imzolanadi — bunday faylni sin
 
 ### O‘rnatish
 
-GitHub → **Actions** → «Windows» → oxirgi muvaffaqiyatli ishga tushirish → **Reaktivlar-Windows-msi** artefaktini yuklab oling, ichidagi `.msi` ni oching. Administrator huquqi kerak emas. Windows «noma’lum nashriyotchi» deb ogohlantirsa: **Batafsil → Baribir ishga tushirish**.
+GitHub → **Actions** → «Windows» → oxirgi muvaffaqiyatli ishga tushirish → **Reaktivlar-Windows-msi** artefaktini yuklab oling, ichidagi `.msi` ni oching. Administrator huquqi kerak emas. Har bir yig‘ishning versiyasi yangi (`1.0.<raqam>`), shuning uchun yangisi eskisining ustiga o‘rnatiladi, ma’lumotlar saqlanib qoladi. O‘rnatuvchi ishlamasa, **Reaktivlar-Windows-portable** dagi papkani ochib `Reaktivlar.exe` ni ishga tushiring. Windows «noma’lum nashriyotchi» deb ogohlantirsa: **Batafsil → Baribir ishga tushirish**.
 
 ### Yig‘ish
 

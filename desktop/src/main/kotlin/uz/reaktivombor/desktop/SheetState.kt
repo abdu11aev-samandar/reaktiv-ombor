@@ -16,9 +16,15 @@ class SheetState(initial: List<SheetRow>, private val clock: () -> Long = System
     var revision: Int by mutableStateOf(0)
         private set
 
+    /** Katakda hali yozilayotgan qiymatni jadvalga o‘tkazadi (oyna yopilishidan oldin). Ekran o‘rnatadi. */
+    var flushPendingEdit: () -> Unit = {}
+
     private val undoStack = ArrayDeque<List<SheetRow>>()
     private val redoStack = ArrayDeque<List<SheetRow>>()
     private var nextId: Long = (initial.maxOfOrNull { it.id } ?: 0L) + 1
+
+    // Yaratilish vaqti doim o‘sib boradi — fayldan qayta ochilganda qatorlar tartibi o‘zgarmaydi.
+    private var lastCreated: Long = initial.maxOfOrNull { it.createdAt } ?: Long.MIN_VALUE
 
     val canUndo: Boolean get() = undoStack.isNotEmpty()
     val canRedo: Boolean get() = redoStack.isNotEmpty()
@@ -48,7 +54,9 @@ class SheetState(initial: List<SheetRow>, private val clock: () -> Long = System
         return true
     }
 
-    fun newRow(): SheetRow = SheetRow(id = nextId++, createdAt = clock())
+    private fun stamp(): Long = maxOf(clock(), lastCreated + 1).also { lastCreated = it }
+
+    fun newRow(): SheetRow = SheetRow(id = nextId++, createdAt = stamp())
 
     /** Katakni o‘zgartiradi. [id] null bo‘lsa — oxiriga yangi qator qo‘shiladi; uning id’si qaytariladi. */
     fun setCell(id: Long?, col: Col, value: String): Long? {
@@ -65,42 +73,102 @@ class SheetState(initial: List<SheetRow>, private val clock: () -> Long = System
 
     fun deleteRow(id: Long) = commit(rows.filterNot { it.id == id })
 
-    fun replaceAll(newRows: List<SheetRow>) = commit(newRows.map { it.copy(id = nextId++) })
+    fun replaceAll(newRows: List<SheetRow>) {
+        newRows.maxOfOrNull { it.createdAt }?.let { lastCreated = maxOf(lastCreated, it) }
+        commit(newRows.map { it.copy(id = nextId++) })
+    }
 
-    fun appendAll(newRows: List<SheetRow>) = commit(rows + newRows.map { it.copy(id = nextId++) })
+    /** Qo‘shilgan qatorlar jadval oxirida turadi — qayta ochilganda ham (yaratilish vaqti yangilanadi). */
+    fun appendAll(newRows: List<SheetRow>) = commit(rows + newRows.map { it.copy(id = nextId++, createdAt = stamp()) })
 
     /**
-     * Excel’dan nusxalangan blokni (tab va yangi qator bilan ajratilgan) [startId] qatorining [startCol] katagidan boshlab qo‘yadi.
+     * Excel’dan nusxalangan blokni (tab va yangi qator bilan ajratilgan) [startIndex]-qatorning [startCol] katagidan boshlab qo‘yadi.
      * Kerak bo‘lsa yangi qatorlar qo‘shiladi. [targetIds] — ko‘rinib turgan tartibdagi qatorlar (filtr/saralashga mos).
+     * Haqiqatan o‘zgargan yoki qo‘shilgan qatorlar sonini qaytaradi.
      */
     fun paste(text: String, targetIds: List<Long>, startIndex: Int, startCol: Col): Int {
-        val lines = text.replace("\r\n", "\n").replace('\r', '\n').trimEnd('\n').split('\n')
-        if (lines.isEmpty() || (lines.size == 1 && lines[0].isEmpty())) return 0
+        val lines = parseClipboard(text.replace("\r\n", "\n").replace('\r', '\n').trimEnd('\n'))
+        if (lines.size == 1 && lines[0].all { it.isBlank() }) return 0
         val cols = Col.entries
+        fun colAt(cellIndex: Int): Col? = cols.getOrNull(startCol.ordinal + cellIndex)
+        fun isDate(col: Col?) = col == Col.RECEIVED || col == Col.EXPIRES
+        val monthFirst = DateText.isMonthFirst(lines.flatMap { cells -> cells.filterIndexed { i, _ -> isDate(colAt(i)) } })
+
         val updated = rows.toMutableList()
-        var created = 0
-        lines.forEachIndexed { lineIndex, line ->
-            val cells = line.split('\t')
-            val targetIndex = startIndex + lineIndex
-            var row = targetIds.getOrNull(targetIndex)?.let { id -> updated.firstOrNull { it.id == id } }
-            val isNew = row == null
-            if (row == null) row = newRow().also { created++ }
-            cells.forEachIndexed { cellIndex, value ->
-                val col = cols.getOrNull(startCol.ordinal + cellIndex)
-                if (col != null && col.editable) row = row!!.with(col, value.trim())
+        var touched = 0
+        lines.forEachIndexed { lineIndex, cells ->
+            val existing = targetIds.getOrNull(startIndex + lineIndex)
+                ?.let { id -> updated.indexOfFirst { it.id == id } }
+                ?.takeIf { it >= 0 }
+            var row = existing?.let { updated[it] } ?: newRow()
+            cells.forEachIndexed { cellIndex, raw ->
+                val col = colAt(cellIndex)
+                if (col != null && col.editable) {
+                    val value = raw.trim()
+                    row = row.with(col, if (monthFirst && isDate(col)) DateText.fromMonthFirst(value) else value)
+                }
             }
-            if (isNew) {
-                if (!row!!.isBlank) updated += row!!
-            } else {
-                val index = updated.indexOfFirst { it.id == row!!.id }
-                updated[index] = row!!
+            when {
+                existing != null -> if (updated[existing] != row) {
+                    updated[existing] = row
+                    touched++
+                }
+                !row.isBlank -> {
+                    updated += row
+                    touched++
+                }
             }
         }
         commit(updated)
-        return lines.size
+        return touched
     }
 
     private companion object {
         const val HISTORY = 200
     }
+}
+
+/**
+ * Excel/Google Sheets nusxasini kataklarga ajratadi. Ichida Alt+Enter (yangi qator) bo‘lgan katakni
+ * Excel qo‘shtirnoqqa oladi ("Natriy xlorid\n(osh tuzi)") — bunday katak bitta katak bo‘lib qoladi, qator bo‘sh joy bilan birlashadi.
+ */
+internal fun parseClipboard(text: String): List<List<String>> {
+    val lines = mutableListOf(mutableListOf<String>())
+    var i = 0
+    while (true) {
+        val quoteEnd = if (text.getOrNull(i) == '"') closingQuote(text, i) else null
+        if (quoteEnd != null) {
+            lines.last() += text.substring(i + 1, quoteEnd)
+                .replace("\"\"", "\"")
+                .replace(Regex("""\s*\n\s*"""), " ")
+                .replace('\t', ' ')
+            i = quoteEnd + 1
+        } else {
+            var end = i
+            while (end < text.length && text[end] != '\t' && text[end] != '\n') end++
+            lines.last() += text.substring(i, end)
+            i = end
+        }
+        if (i >= text.length) break
+        if (text[i] == '\n') lines += mutableListOf<String>()
+        i++
+    }
+    return lines
+}
+
+/** [start]dagi qo‘shtirnoqning jufti; undan keyin tab, yangi qator yoki matn oxiri bo‘lmasa — bu oddiy belgi. */
+private fun closingQuote(text: String, start: Int): Int? {
+    var i = start + 1
+    while (i < text.length) {
+        if (text[i] == '"') {
+            if (text.getOrNull(i + 1) == '"') {
+                i += 2
+                continue
+            }
+            val next = text.getOrNull(i + 1)
+            return if (next == null || next == '\t' || next == '\n') i else null
+        }
+        i++
+    }
+    return null
 }

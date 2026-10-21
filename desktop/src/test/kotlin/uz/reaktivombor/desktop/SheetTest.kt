@@ -1,6 +1,7 @@
 package uz.reaktivombor.desktop
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -62,5 +63,24 @@ class SheetTest {
         assertEquals("1 250,5", displayAmount("1250,5"))
         assertEquals("ko‘p", displayAmount("ko‘p"))
         assertEquals("17.10.2026", displayDate("2026-10-17"))
+    }
+
+    @Test
+    fun slashDatesThatCanOnlyBeMonthFirstAreAccepted() {
+        assertEquals(LocalDate.parse("2026-10-25"), DateText.parse("10/25/2026"))
+        assertNull(DateText.parse("10.25.2026"))
+        // Ikki xil o‘qilishi mumkin — odatdagidek kun/oy.
+        assertEquals(LocalDate.parse("2026-10-03"), DateText.parse("3/10/2026"))
+    }
+
+    @Test
+    fun monthFirstIsDetectedFromTheWholeBlock() {
+        assertTrue(DateText.isMonthFirst(listOf("10/25/2026", "3/10/2027", "")))
+        assertFalse(DateText.isMonthFirst(listOf("25/10/2026", "3/10/2027")))
+        assertFalse(DateText.isMonthFirst(listOf("3/10/2027")))
+        assertFalse(DateText.isMonthFirst(listOf("10/25/2026", "25/10/2026")))
+        assertFalse(DateText.isMonthFirst(listOf("10.25.2026")))
+        assertEquals("10.3.2027", DateText.fromMonthFirst("3/10/2027"))
+        assertEquals("17.10.2026", DateText.fromMonthFirst("17.10.2026"))
     }
 }

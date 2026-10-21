@@ -84,4 +84,43 @@ class SheetStoreTest {
         assertEquals("2;Ammiak;30.09.2026;;ml;;;Tugallanmagan;", lines[2])
         assertEquals("3;Shavel kislota;15.07.2026;250;gr;20.12.2026;180,5;1 – 3 oy;60 kun qoldi", lines[3])
     }
+
+    @Test
+    fun backupCopyProblemDoesNotBlockSaving() {
+        val store = SheetStore(tmp.root.toPath().resolve("reaktivlar.json"))
+        store.save(rows.take(1))
+        // .bak almashtirib bo‘lmaydigan holatda (band yoki faqat o‘qish uchun) — bu yerda bo‘sh bo‘lmagan papka.
+        Files.createDirectories(store.backupFile.resolve("band"))
+        store.save(rows)
+        assertEquals(listOf("Etil spirti", "Ammiak", "Shavel kislota"), store.load().rows.map { it.name })
+    }
+
+    @Test
+    fun simultaneousSavesNeverBreakTheFile() {
+        val store = SheetStore(tmp.root.toPath().resolve("reaktivlar.json"))
+        val many = (1..100).map { SheetRow(it.toLong(), "Reaktiv $it", "01.01.2026", "1", "gr", "01.01.2028", "$it", it.toLong()) }
+        val errors = java.util.concurrent.ConcurrentLinkedQueue<Throwable>()
+        val threads = (1..4).map { Thread { repeat(40) { runCatching { store.save(many) }.onFailure(errors::add) } } }
+        threads.forEach(Thread::start)
+        threads.forEach(Thread::join)
+        assertEquals(emptyList<Throwable>(), errors.toList())
+        val loaded = store.load()
+        assertEquals(null, loaded.warning)
+        assertEquals(100, loaded.rows.size)
+    }
+
+    @Test
+    fun equalTimestampsKeepTheirOrderAfterReload() {
+        val json = """
+            {"format":"reaktiv-ombor","version":1,"reagents":[
+              {"name":"B","receivedAt":"2026-01-01","givenAmount":"1","unit":"gr","expiresAt":"2028-01-01","stockAmount":"1","createdAt":5}
+            ],"drafts":[
+              {"name":"A","receivedAt":"","givenAmount":"","unit":"gr","expiresAt":"","stockAmount":"","createdAt":5}
+            ]}
+        """.trimIndent()
+        val first = SheetStore.parse(json).rows
+        val second = SheetStore.parse(SheetStore.toJson(first, "x")).rows
+        assertEquals(first.map { it.name }, second.map { it.name })
+        assertTrue(first.zipWithNext().all { (a, b) -> a.createdAt < b.createdAt })
+    }
 }

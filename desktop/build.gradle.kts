@@ -7,7 +7,10 @@ plugins {
 }
 
 group = "uz.reaktivombor"
-version = "1.0.1"
+// MSI’ning ProductCode’i versiyadan olinadi: bir xil versiyali ikkinchi o‘rnatuvchi birinchisining ustiga o‘rnatilmaydi.
+// Shuning uchun CI har yig‘ishga yangi raqam beradi (-PappVersion=1.0.<run_number>); bu qiymat — mahalliy yig‘ish uchun.
+val appVersion = providers.gradleProperty("appVersion").getOrElse("1.0.0")
+version = appVersion
 
 kotlin {
     compilerOptions {
@@ -61,7 +64,7 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Msi, TargetFormat.Exe, TargetFormat.Deb)
             packageName = "Reaktivlar"
-            packageVersion = "1.0.1"
+            packageVersion = appVersion
             description = "Laboratoriya reaktivlari hisobi"
             vendor = "Reaktivlar hisobi"
             modules("java.instrument", "jdk.unsupported")

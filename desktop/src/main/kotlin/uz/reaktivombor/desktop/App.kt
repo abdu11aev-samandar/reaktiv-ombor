@@ -43,6 +43,7 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -168,11 +169,19 @@ private fun AppContent(
     var sort by remember { mutableStateOf<Pair<Col, Boolean>?>(null) }
     // Yangi qo‘shilgan qatorlar filtr/saralashdan qat’i nazar ko‘rinib turadi (yozayotganda “sakrab” ketmasin).
     var pinned by remember { mutableStateOf(setOf<Long>()) }
+    // Tahrirlangandan keyin qatorlar tartibi “muzlaydi” (Excel’dagi kabi): qator filtrga mos kelmay qolsa yoki
+    // saralash bo‘yicha o‘rni o‘zgarsa ham joyida turadi — Enter/Tab keyingi qatorga o‘tadi, begonasiga emas.
+    // Filtr, qidiruv yoki saralash o‘zgarganda qayta hisoblanadi.
+    var frozen by remember { mutableStateOf<List<Long>?>(null) }
 
     var selId by remember { mutableStateOf(state.rows.firstOrNull()?.id) }
     var selCol by remember { mutableStateOf(Col.NAME) }
     var editing by remember { mutableStateOf(false) }
     var editValue by remember { mutableStateOf(TextFieldValue("")) }
+    // Katakka to‘g‘ridan-to‘g‘ri yozila boshlangan (F2 yoki ikki marta bosish emas) — strelkalar katakdan chiqaradi.
+    var typedOver by remember { mutableStateOf(false) }
+    // Tab bilan qator bo‘ylab yurilgan bo‘lsa, Enter keyingi qatorning boshlangan ustuniga qaytaradi.
+    var tabStartCol by remember { mutableStateOf<Col?>(null) }
 
     var notice by remember { mutableStateOf<Notice?>(startupWarning?.let { Notice(it, isError = true) }) }
     var importPending by remember { mutableStateOf<SheetStore.Parsed?>(null) }
@@ -190,12 +199,12 @@ private fun AppContent(
 
     // ---------- Ko‘rinish: qidiruv, filtr, saralash ----------
     val checks = remember(state.rows) { state.rows.associate { it.id to it.check() } }
-    val visible = visibleRows(state.rows, checks, search, filter, sort, pinned, today)
+    val visible = visibleRows(state.rows, checks, search, filter, sort, pinned, today, frozen)
     val lines = visible.map { GridLine(it, checks[it.id]) } + GridLine(null, null)
 
     /** Hodisa paytidagi (yangi) holat — kompozitsiyadagi ro‘yxat eskirgan bo‘lishi mumkin. */
     fun freshVisible(): List<SheetRow> =
-        visibleRows(state.rows, state.rows.associate { it.id to it.check() }, search, filter, sort, pinned, today)
+        visibleRows(state.rows, state.rows.associate { it.id to it.check() }, search, filter, sort, pinned, today, frozen)
 
     fun indexIn(rows: List<SheetRow>): Int =
         if (selId == null) rows.size else rows.indexOfFirst { it.id == selId }.let { if (it < 0) 0 else it }
@@ -238,15 +247,31 @@ private fun AppContent(
 
     fun viewChanged() {
         pinned = emptySet()
+        frozen = null
+    }
+
+    fun freezeView() {
+        if (frozen == null && (filter != Filter.ALL || search.isNotBlank() || sort != null)) frozen = freshVisible().map { it.id }
     }
 
     fun refocus() {
         focusTick++
     }
 
+    fun setCell(value: String) {
+        freezeView()
+        val wasNew = selId == null
+        val id = state.setCell(selId, selCol, value)
+        if (wasNew && id != null) {
+            selId = id
+            pinned = pinned + id
+        }
+    }
+
     fun commitEdit() {
         if (!editing) return
         editing = false
+        typedOver = false
         var value = editValue.text.trim()
         if (selCol == Col.UNIT && value.isNotEmpty()) {
             // "m" → "ml", "k" → "kg" — bitta mos birlik bo‘lsa to‘ldiramiz.
@@ -254,50 +279,52 @@ private fun AppContent(
             value = Amounts.UNITS.singleOrNull { it == normalized } ?: Amounts.UNITS.filter { it.startsWith(normalized) }.singleOrNull() ?: normalized
         }
         if (value == rawOf(selId, selCol)) return
-        val wasNew = selId == null
-        val id = state.setCell(selId, selCol, value)
-        if (wasNew && id != null) {
-            selId = id
-            pinned = pinned + id
-        }
+        setCell(value)
     }
+    // Oyna yopilayotganda yozib turilgan katak yo‘qolmasin.
+    SideEffect { state.flushPendingEdit = { commitEdit() } }
 
     fun cancelEdit() {
         editing = false
+        typedOver = false
         editValue = TextFieldValue("")
     }
 
-    fun startEditing(text: String = rawOf(selId, selCol)) {
+    /** [typed] — Excel’ning “kiritish” rejimi: strelkalar katakdan chiqaradi (F2 bilan ochilganda — matn ichida yuradi). */
+    fun startEditing(text: String = rawOf(selId, selCol), typed: Boolean = false) {
         if (!selCol.editable) return
         editing = true
+        typedOver = typed
         editValue = TextFieldValue(text, TextRange(text.length))
         refocus()
     }
 
-    /** [id] null — oxiridagi “yangi qator”. */
-    fun select(id: Long?, col: Col, edit: Boolean = false) {
+    /** [id] null — oxiridagi “yangi qator”. [keepTab] — Tab bilan yurish davom etyapti. */
+    fun select(id: Long?, col: Col, edit: Boolean = false, keepTab: Boolean = false) {
         commitEdit()
+        if (!keepTab) tabStartCol = null
         selId = id?.takeIf { wanted -> state.rows.any { it.id == wanted } }
         selCol = col
         editValue = TextFieldValue("")
         if (edit) startEditing() else refocus()
     }
 
-    fun move(dRow: Int, dCol: Int) {
+    fun move(dRow: Int, dCol: Int, keepTab: Boolean = false) {
         commitEdit()
         val rows = freshVisible()
         val index = (indexIn(rows) + dRow).coerceIn(0, rows.size)
         val cols = Col.entries
-        select(rows.getOrNull(index)?.id, cols[(selCol.ordinal + dCol).coerceIn(0, cols.lastIndex)])
+        select(rows.getOrNull(index)?.id, cols[(selCol.ordinal + dCol).coerceIn(0, cols.lastIndex)], keepTab = keepTab)
     }
 
-    fun setCell(value: String) {
-        val wasNew = selId == null
-        val id = state.setCell(selId, selCol, value)
-        if (wasNew && id != null) {
-            selId = id
-            pinned = pinned + id
-        }
+    fun tab(back: Boolean) {
+        if (tabStartCol == null) tabStartCol = selCol
+        move(0, if (back) -1 else 1, keepTab = true)
+    }
+
+    fun enter(back: Boolean) {
+        val start = tabStartCol
+        if (start != null && !back) move(1, start.ordinal - selCol.ordinal) else move(if (back) -1 else 1, 0)
     }
 
     fun deleteRow(id: Long?) {
@@ -309,19 +336,25 @@ private fun AppContent(
         pinned = pinned - id
         val remaining = before.filterNot { it.id == id }
         selId = remaining.getOrNull(index.coerceAtMost(remaining.lastIndex))?.id
-        notice = Notice("Qator o‘chirildi. Qaytarish uchun Ctrl+Z ni bosing.")
+        notice = Notice("Qator o‘chirildi. Tiklash uchun Ctrl+Z ni bosing.")
         refocus()
     }
 
     fun undo() {
         cancelEdit()
-        if (state.undo()) notice = Notice("Oxirgi o‘zgarish bekor qilindi.")
+        if (state.undo()) {
+            frozen = null
+            notice = Notice("Oxirgi o‘zgarish bekor qilindi.")
+        }
         refocus()
     }
 
     fun redo() {
         cancelEdit()
-        if (state.redo()) notice = Notice("O‘zgarish qaytarildi.")
+        if (state.redo()) {
+            frozen = null
+            notice = Notice("O‘zgarish qayta bajarildi.")
+        }
         refocus()
     }
 
@@ -330,15 +363,22 @@ private fun AppContent(
         if (text.isEmpty()) return
         val block = text.trimEnd('\r', '\n')
         if (block.contains('\t') || block.contains('\n')) {
+            freezeView()
             val before = state.rows.map { it.id }.toSet()
             val rows = freshVisible()
             val count = state.paste(block, rows.map { it.id }, indexIn(rows), selCol)
             val created = state.rows.map { it.id }.filterNot { it in before }
             pinned = pinned + created
             if (selId == null) selId = created.firstOrNull()
-            notice = Notice("$count qator qo‘yildi. Bekor qilish: Ctrl+Z.")
+            notice = if (count == 0) {
+                Notice("Hech narsa o‘zgarmadi: nusxadagi qiymatlar jadvaldagi bilan bir xil yoki ularni bu ustunga qo‘yib bo‘lmaydi.", isError = true)
+            } else {
+                Notice("$count qator qo‘yildi. Bekor qilish: Ctrl+Z.")
+            }
         } else if (selCol.editable) {
-            setCell(block.trim())
+            val value = block.trim()
+            val isDate = selCol == Col.RECEIVED || selCol == Col.EXPIRES
+            setCell(if (isDate && DateText.isMonthFirst(listOf(value))) DateText.fromMonthFirst(value) else value)
         }
         refocus()
     }
@@ -350,11 +390,13 @@ private fun AppContent(
 
         if (editing) {
             return when (event.key) {
-                Key.Enter, Key.NumPadEnter -> { commitEdit(); move(if (shift) -1 else 1, 0); true }
-                Key.Tab -> { commitEdit(); move(0, if (shift) -1 else 1); true }
+                Key.Enter, Key.NumPadEnter -> { enter(back = shift); true }
+                Key.Tab -> { tab(back = shift); true }
                 Key.Escape -> { cancelEdit(); refocus(); true }
-                Key.DirectionUp -> { commitEdit(); move(-1, 0); true }
-                Key.DirectionDown -> { commitEdit(); move(1, 0); true }
+                Key.DirectionUp -> { move(-1, 0); true }
+                Key.DirectionDown -> { move(1, 0); true }
+                Key.DirectionLeft -> if (typedOver) { move(0, -1); true } else false
+                Key.DirectionRight -> if (typedOver) { move(0, 1); true } else false
                 else -> false
             }
         }
@@ -390,10 +432,11 @@ private fun AppContent(
             Key.DirectionDown -> { move(1, 0); true }
             Key.DirectionLeft -> { move(0, -1); true }
             Key.DirectionRight -> { move(0, 1); true }
-            Key.Tab -> { move(0, if (shift) -1 else 1); true }
-            Key.Enter, Key.NumPadEnter, Key.F2 -> { if (selCol.editable) startEditing() else move(1, 0); true }
+            Key.Tab -> { tab(back = shift); true }
+            Key.Enter, Key.NumPadEnter -> { enter(back = shift); true }
+            Key.F2 -> { if (selCol.editable) startEditing(); true }
             Key.Delete -> { if (selCol.editable && selId != null) setCell(""); true }
-            Key.Backspace -> { startEditing(""); true }
+            Key.Backspace -> { startEditing("", typed = true); true }
             Key.MoveHome -> { select(selId, Col.NAME); true }
             Key.MoveEnd -> { select(selId, Col.STATUS); true }
             Key.PageUp -> { move(-15, 0); true }
@@ -409,6 +452,7 @@ private fun AppContent(
         } else if (value.text.isNotEmpty() && selCol.editable) {
             // Ko‘rish rejimida yozila boshlandi — Excel’dagi kabi eski qiymat almashtiriladi.
             editing = true
+            typedOver = true
             editValue = value
         }
     }
@@ -483,9 +527,10 @@ private fun AppContent(
             canRedo = state.canRedo,
             onAdd = {
                 commitEdit()
+                tabStartCol = null
                 selId = null
                 selCol = Col.NAME
-                startEditing("")
+                startEditing("", typed = true)
             },
             onDelete = { deleteRow(selId) },
             canDelete = selId != null,
@@ -578,7 +623,7 @@ private fun AppContent(
         AlertDialog(
             onDismissRequest = { rowMenuFor = null },
             title = { Text("Qatorni o‘chirish") },
-            text = { Text("«$name» qatori o‘chirilsinmi? Keyin Ctrl+Z bilan qaytarish mumkin.") },
+            text = { Text("«$name» qatori o‘chirilsinmi? Keyin Ctrl+Z bilan tiklash mumkin.") },
             confirmButton = { Button(onClick = { rowMenuFor = null; deleteRow(id) }) { Text("O‘chirish") } },
             dismissButton = { TextButton(onClick = { rowMenuFor = null; refocus() }) { Text("Bekor qilish") } },
         )
@@ -597,7 +642,7 @@ private fun AppContent(
                         if (incomplete > 0) append(" (shundan $incomplete tasi tugallanmagan)")
                         append(". ")
                         if (parsed.skipped > 0) append("${parsed.skipped} ta buzuq qator tashlab ketildi. ")
-                        append("Jadvalda hozir $current ta qator bor.\n\nAlmashtirilsa, hozirgi jadval fayldagisi bilan almashadi (Ctrl+Z bilan qaytarish mumkin).")
+                        append("Jadvalda hozir $current ta qator bor.\n\nAlmashtirilsa, hozirgi jadval fayldagisi bilan almashadi (Ctrl+Z bilan tiklash mumkin).")
                     },
                 )
             },
@@ -625,7 +670,10 @@ private fun AppContent(
     }
 }
 
-/** Qidiruv, rang filtri va saralashdan o‘tgan qatorlar; yangi qo‘shilganlar ([pinned]) oxirida turadi. */
+/**
+ * Qidiruv, rang filtri va saralashdan o‘tgan qatorlar; yangi qo‘shilganlar ([pinned]) oxirida turadi.
+ * [frozen] berilsa — ko‘rinish shu tartibda qoladi (o‘chirilganlari tushib qoladi, yangilari oxiriga qo‘shiladi).
+ */
 fun visibleRows(
     rows: List<SheetRow>,
     checks: Map<Long, RowCheck>,
@@ -634,7 +682,13 @@ fun visibleRows(
     sort: Pair<Col, Boolean>?,
     pinned: Set<Long>,
     today: LocalDate,
+    frozen: List<Long>? = null,
 ): List<SheetRow> {
+    if (frozen != null) {
+        val byId = rows.associateBy { it.id }
+        val shown = frozen.toSet()
+        return frozen.mapNotNull(byId::get) + rows.filter { it.id in pinned && it.id !in shown }
+    }
     val needle = searchKey(search.trim())
     val matching = rows.filter { row ->
         val check = checks.getValue(row.id)
@@ -705,7 +759,7 @@ private fun Toolbar(
                 Text("Qatorni o‘chirish")
             }
             TextButton(onClick = onUndo, enabled = canUndo) { Text("↶ Bekor qilish") }
-            TextButton(onClick = onRedo, enabled = canRedo) { Text("↷ Qaytarish") }
+            TextButton(onClick = onRedo, enabled = canRedo) { Text("↷ Qayta bajarish") }
             Spacer(Modifier.weight(1f))
             Box {
                 OutlinedButton(onClick = { onFileMenu(true) }) {
@@ -738,7 +792,7 @@ private fun Toolbar(
                 FilterChip(
                     selected = filter == option,
                     onClick = { onFilter(if (filter == option && option != Filter.ALL) Filter.ALL else option) },
-                    label = { Text("${option.label}  $count", fontSize = 13.sp) },
+                    label = { Text("${option.label}  $count", fontSize = 13.sp, maxLines = 1, softWrap = false) },
                     leadingIcon = option.status?.let { status ->
                         { Box(Modifier.size(11.dp).background(SheetColors.pill.getValue(status).first, CircleShape)) }
                     },

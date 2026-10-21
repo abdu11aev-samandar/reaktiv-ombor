@@ -23,7 +23,9 @@ object DateText {
         DAY_FIRST.matchEntire(text)?.let { m ->
             val (day, month, year) = m.destructured
             val fullYear = if (year.length == 2) 2000 + year.toInt() else year.toInt()
+            // 10/25/2026 kun/oy bo‘la olmaydi — demak AQSh tartibi (oy/kun/yil).
             return of(fullYear, month.toInt(), day.toInt())
+                ?: if ('/' in text && month.toInt() > 12) of(fullYear, day.toInt(), month.toInt()) else null
         }
         ISO.matchEntire(text)?.let { m ->
             val (year, month, day) = m.destructured
@@ -34,6 +36,26 @@ object DateText {
 
     private fun of(year: Int, month: Int, day: Int): LocalDate? =
         runCatching { LocalDate.of(year, month, day) }.getOrNull()
+
+    private val SLASH = Regex("""(\d{1,2})/(\d{1,2})/(\d{4}|\d{2})""")
+
+    /**
+     * Excel AQSh sozlamasida sanalarni oy/kun/yil (10/25/2026) ko‘rinishida nusxalaydi.
+     * Blokda faqat shunday o‘qiladigan sana bo‘lsa va kun/oy deb o‘qiladigani bo‘lmasa — blok oy/kun tartibida.
+     */
+    fun isMonthFirst(values: List<String>): Boolean {
+        var monthFirst = false
+        for (value in values) {
+            val (first, second) = SLASH.matchEntire(value.trim())?.destructured ?: continue
+            if (first.toInt() > 12) return false
+            if (second.toInt() > 12) monthFirst = true
+        }
+        return monthFirst
+    }
+
+    /** "3/10/2027" (oy/kun/yil) → "10.3.2027". */
+    fun fromMonthFirst(raw: String): String =
+        SLASH.matchEntire(raw.trim())?.destructured?.let { (month, day, year) -> "$day.$month.$year" } ?: raw
 }
 
 /** Birlikni tozalaydi: "ML" → "ml", "г" → "gr". Noma’lum bo‘lsa — o‘zgarishsiz (keyin xato ko‘rsatiladi). */
@@ -55,7 +77,7 @@ enum class Col(val title: String, val widthDp: Int, val field: Field?) {
     UNIT("Birlik", 75, Field.UNIT),
     EXPIRES("Yaroqlilik muddati", 145, Field.EXPIRES_AT),
     STOCK("Ombordagi miqdor", 145, Field.STOCK_AMOUNT),
-    STATUS("Holat", 215, null),
+    STATUS("Holat", 250, null),
     ;
 
     val editable: Boolean get() = this.field != null
