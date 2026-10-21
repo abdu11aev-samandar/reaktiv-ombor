@@ -7,7 +7,7 @@ plugins {
 }
 
 group = "uz.reaktivombor"
-version = "1.0.0"
+version = "1.0.1"
 
 kotlin {
     compilerOptions {
@@ -39,6 +39,21 @@ dependencies {
     testImplementation(compose.uiTest)
 }
 
+// Windows 10/11 da Universal CRT (ucrtbase.dll, api-ms-win-*.dll) tizimning o‘zida bor.
+// Ularning dastur papkasidagi nusxasini antiviruslar “tizim DLL’ini almashtirish” deb bloklaydi va
+// MSI “Error writing to file … runtime\\bin\\ucrtbase.dll” xatosi bilan to‘xtaydi — shuning uchun olib tashlaymiz.
+tasks.withType<org.jetbrains.compose.desktop.application.tasks.AbstractJLinkTask>().configureEach {
+    doLast {
+        val bin = destinationDir.get().asFile.resolve("bin")
+        bin.listFiles()
+            ?.filter { it.name.equals("ucrtbase.dll", ignoreCase = true) || it.name.startsWith("api-ms-win-", ignoreCase = true) }
+            ?.forEach { file ->
+                logger.lifecycle("Runtime’dan olib tashlandi: ${file.name}")
+                file.delete()
+            }
+    }
+}
+
 compose.desktop {
     application {
         mainClass = "uz.reaktivombor.desktop.MainKt"
@@ -46,7 +61,7 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Msi, TargetFormat.Exe, TargetFormat.Deb)
             packageName = "Reaktivlar"
-            packageVersion = "1.0.0"
+            packageVersion = "1.0.1"
             description = "Laboratoriya reaktivlari hisobi"
             vendor = "Reaktivlar hisobi"
             modules("java.instrument", "jdk.unsupported")
