@@ -57,6 +57,45 @@ tasks.withType<org.jetbrains.compose.desktop.application.tasks.AbstractJLinkTask
     }
 }
 
+// jpackage’ning .deb skriptlari menyu yorlig‘ini xdg-desktop-menu bilan qo‘yadi. Menyu papkalari bo‘lmagan tizimda
+// (/usr/share/desktop-directories yo‘q) u xato beradi va paket “yarim o‘rnatilgan” bo‘lib qoladi — hatto o‘chirib ham
+// bo‘lmaydi. Yorliq — qo‘shimcha narsa: xato bo‘lsa .desktop faylni o‘zimiz qo‘yamiz (va o‘chiramiz).
+tasks.matching { it.name == "packageDeb" }.configureEach {
+    doLast {
+        val desktopFile = "/usr/share/applications/reaktivlar-Reaktivlar.desktop"
+        val work = temporaryDir.resolve("deb")
+        fun run(vararg command: String) {
+            val process = ProcessBuilder(*command).inheritIO().start()
+            check(process.waitFor() == 0) { "Bajarilmadi: ${command.joinToString(" ")}" }
+        }
+        fun patch(script: String, line: Regex, replacement: String) {
+            val file = work.resolve("DEBIAN/$script")
+            val text = file.readText()
+            if (desktopFile in text) return
+            check(line.containsMatchIn(text)) { "$script: xdg-desktop-menu qatori topilmadi" }
+            file.writeText(text.replace(line, replacement))
+        }
+        layout.buildDirectory.dir("compose/binaries/main/deb").get().asFile
+            .listFiles { file -> file.extension == "deb" }
+            ?.forEach { deb ->
+                work.deleteRecursively()
+                run("dpkg-deb", "-R", deb.path, work.path)
+                patch(
+                    "postinst",
+                    Regex("""^(xdg-desktop-menu install (\S+))[ \t]*$""", RegexOption.MULTILINE),
+                    "$1 2>/dev/null || install -D -m 644 $2 $desktopFile",
+                )
+                patch(
+                    "prerm",
+                    Regex("""^(xdg-desktop-menu uninstall \S+)[ \t]*$""", RegexOption.MULTILINE),
+                    "$1 2>/dev/null || true\nrm -f $desktopFile",
+                )
+                run("dpkg-deb", "--build", "--root-owner-group", "-Zxz", work.path, deb.path)
+                logger.lifecycle("Menyu yorlig‘i skriptlari tuzatildi: ${deb.name}")
+            }
+    }
+}
+
 compose.desktop {
     application {
         mainClass = "uz.reaktivombor.desktop.MainKt"
@@ -81,6 +120,8 @@ compose.desktop {
             }
             linux {
                 iconFile.set(project.file("icons/reaktivlar.png"))
+                // Menyuda “Ofis” bo‘limida chiqadi (aks holda “Boshqa”).
+                menuGroup = "Office"
             }
         }
     }

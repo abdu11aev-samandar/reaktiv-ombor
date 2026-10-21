@@ -135,6 +135,16 @@ Kalit topilmasa, APK sinov (debug) kaliti bilan imzolanadi — bunday faylni sin
 
 GitHub → **Actions** → «Windows» → oxirgi muvaffaqiyatli ishga tushirish → **Reaktivlar-Windows-msi** artefaktini yuklab oling, ichidagi `.msi` ni oching. Administrator huquqi kerak emas. Har bir yig‘ishning versiyasi yangi (`1.0.<raqam>`), shuning uchun yangisi eskisining ustiga o‘rnatiladi, ma’lumotlar saqlanib qoladi. O‘rnatuvchi ishlamasa, **Reaktivlar-Windows-portable** dagi papkani ochib `Reaktivlar.exe` ni ishga tushiring. Windows «noma’lum nashriyotchi» deb ogohlantirsa: **Batafsil → Baribir ishga tushirish**.
 
+### Linux (Kali, Debian, Ubuntu, Mint)
+
+GitHub → **Actions** → «Windows» → **Reaktivlar-Linux-deb** artefaktidagi `.deb` faylni o‘rnating:
+
+```bash
+sudo apt install ./reaktivlar_*_amd64.deb
+```
+
+Dastur menyuning «Ofis» bo‘limida chiqadi (yoki `/opt/reaktivlar/bin/Reaktivlar`). Ma’lumotlar: `~/.local/share/reaktivlar/reaktivlar.json`. O‘chirish: `sudo apt remove reaktivlar` (ma’lumotlar qoladi).
+
 ### Yig‘ish
 
 ```bash
@@ -142,6 +152,7 @@ cd desktop
 ./gradlew test          # testlar
 ./gradlew run           # dasturni ishga tushirish
 ./gradlew packageMsi    # Windows o‘rnatuvchisi (faqat Windows’da)
+./gradlew packageDeb    # Linux .deb (Debian/Ubuntu’da; Temurin JDK 17 bilan yig‘ing)
 ```
 
 ## Testlar

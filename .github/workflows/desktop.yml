@@ -35,6 +35,45 @@ jobs:
       - name: Tests
         run: ./gradlew --no-daemon test
 
+  deb:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+      # Temurin kutubxonalarni (libjpeg va h.k.) o'zi bilan olib yuradi — paket Debian/Kali'da ham o'rnatiladi.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Build .deb (Debian, Ubuntu, Kali, Mint)
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq fakeroot
+          if [[ "$GITHUB_REF" == refs/tags/desktop-v* ]]; then V="${GITHUB_REF_NAME#desktop-v}"; else V="1.0.${{ github.run_number }}"; fi
+          echo "Versiya: $V"
+          ./gradlew --no-daemon packageDeb -PappVersion="$V"
+      - name: Install and remove test
+        run: |
+          sudo apt-get install -y ./build/compose/binaries/main/deb/*.deb
+          test -x /opt/reaktivlar/bin/Reaktivlar
+          sudo apt-get purge -y reaktivlar
+      - name: Upload .deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: Reaktivlar-Linux-deb
+          path: desktop/build/compose/binaries/main/deb/*.deb
+          if-no-files-found: error
+      - name: Attach to release (desktop-v* tag)
+        if: startsWith(github.ref, 'refs/tags/desktop-v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: desktop/build/compose/binaries/main/deb/*.deb
+
   msi:
     needs: test
     runs-on: windows-latest
