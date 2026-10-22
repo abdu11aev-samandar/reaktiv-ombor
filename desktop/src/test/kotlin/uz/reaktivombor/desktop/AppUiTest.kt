@@ -390,6 +390,44 @@ class AppUiTest {
         assertEquals(before, state.rows)
     }
 
+    @Test
+    fun copyingAComputedCellCopiesItsNumber() = runComposeUiTest {
+        val state = SheetState(SheetStore.fromJson(SAMPLE))
+        val clipboard = object : ClipboardManager {
+            var content: AnnotatedString? = null
+            override fun getText(): AnnotatedString? = content
+            override fun setText(annotatedString: AnnotatedString) { content = annotatedString }
+        }
+        val store = SheetStore(tmp.root.toPath().resolve("reaktivlar.json"))
+        setContent {
+            CompositionLocalProvider(LocalClipboardManager provides clipboard) {
+                ReaktivlarApp(state, store, noDialogs, todayProvider = { today }, autoSave = false, refreshToday = false)
+            }
+        }
+        onNodeWithTag("cell-1-A").performClick()
+        onNodeWithTag("cell-editor").key(Key.MoveEnd) // J1 — Qolgan muddat
+        onNodeWithTag("cell-editor").performKeyInput { keyDown(Key.CtrlLeft); pressKey(Key.C); keyUp(Key.CtrlLeft) }
+        assertEquals("315", clipboard.content?.text)
+        onNodeWithTag("cell-editor").key(Key.DirectionLeft) // I1 — Qoldiq
+        onNodeWithTag("cell-editor").performKeyInput { keyDown(Key.CtrlLeft); pressKey(Key.X); keyUp(Key.CtrlLeft) }
+        assertEquals("750", clipboard.content?.text)
+        assertEquals("750", state.byName("Etil spirti").stockAmount) // Ctrl+X hisoblangan katakni o‘chirmaydi
+    }
+
+    @Test
+    fun descendingSortKeepsEmptyCellsLast() {
+        val rows = listOf(
+            SheetRow(1, "A", createdAt = 1),
+            SheetRow(2, "B", issuedAmount = "5", createdAt = 2),
+            SheetRow(3, "C", issuedAmount = "25", createdAt = 3),
+        )
+        val checks = rows.associate { it.id to it.check(today) }
+        val desc = visibleRows(rows, checks, "", Filter.ALL, Col.ISSUED to false, emptySet(), today)
+        assertEquals(listOf("C", "B", "A"), desc.map { it.name })
+        val asc = visibleRows(rows, checks, "", Filter.ALL, Col.ISSUED to true, emptySet(), today)
+        assertEquals(listOf("B", "C", "A"), asc.map { it.name })
+    }
+
     companion object {
         val SAMPLE = """
             {"format":"reaktiv-ombor","version":2,"rows":[

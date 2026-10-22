@@ -75,30 +75,58 @@ class SheetStoreTest {
         assertEquals(setOf(Col.PRODUCED), row.check().errors.keys)
     }
 
+    private val oldFile = """
+        {"format":"reaktiv-ombor","version":1,"reagents":[
+          {"name":"Etil spirti","receivedAt":"2026-09-01","givenAmount":"1000","unit":"ml","expiresAt":"2027-09-01","stockAmount":"750","createdAt":1}
+        ],"drafts":[
+          {"name":"Jelatin","receivedAt":"20.09.2026","givenAmount":"","unit":"gr","expiresAt":"","stockAmount":"","createdAt":2},
+          {"name":"","receivedAt":"21.09.2026","givenAmount":"","unit":"gr","expiresAt":"","stockAmount":"","createdAt":3}
+        ]}
+    """.trimIndent()
+
     @Test
-    fun anOldDataFileIsMigratedOnceAndItsOriginalKept() {
-        val file = tmp.root.toPath().resolve("reaktivlar.json")
-        val old = """
-            {"format":"reaktiv-ombor","version":1,"reagents":[
-              {"name":"Etil spirti","receivedAt":"2026-09-01","givenAmount":"1000","unit":"ml","expiresAt":"2027-09-01","stockAmount":"750","createdAt":1}
-            ],"drafts":[
-              {"name":"Jelatin","receivedAt":"20.09.2026","givenAmount":"","unit":"gr","expiresAt":"","stockAmount":"","createdAt":2}
-            ]}
-        """.trimIndent()
-        Files.writeString(file, old)
-        val store = SheetStore(file)
+    fun theOldDataFileIsMigratedButNeverWritten() {
+        val dir = tmp.root.toPath()
+        val legacy = dir.resolve(SheetStore.LEGACY_FILE_NAME)
+        Files.writeString(legacy, oldFile)
+        val store = SheetStore(dir.resolve(SheetStore.FILE_NAME))
         val loaded = store.load()
         assertNotNull(loaded.warning)
-        assertEquals(listOf("Etil spirti", "Jelatin"), loaded.rows.map { it.name })
+        assertEquals(listOf("Etil spirti", "Jelatin", ""), loaded.rows.map { it.name })
         assertEquals("g", loaded.rows[1].unit)
         assertEquals("20.09.2026", loaded.rows[1].legacyReceivedAt)
-        assertEquals(old, Files.readString(file.resolveSibling("reaktivlar-eski-jadval.json")))
 
         store.save(loaded.rows)
-        val saved = JSONObject(Files.readString(file))
+        assertEquals(oldFile, Files.readString(legacy)) // eski fayl o‘zgarmaydi
+        val saved = JSONObject(Files.readString(store.file))
         assertEquals(2, saved.getInt("version"))
-        assertEquals("2026-09-01", saved.getJSONArray("rows").getJSONObject(0).getString("receivedAt")) // eski sana yo‘qolmadi
-        assertEquals(null, store.load().warning) // endi yangi format
+        val rowsJson = saved.getJSONArray("rows")
+        assertEquals("2026-09-01", rowsJson.getJSONObject(0).getString("receivedAt"))
+        assertEquals("2026-09-21", rowsJson.getJSONObject(2).getString("receivedAt")) // faqat sanasi bor eski qator ham qoldi
+        assertEquals(null, store.load().warning) // endi yangi fayldan
+    }
+
+    @Test
+    fun runningTheOldVersionAgainCannotEmptyTheNewTable() {
+        val dir = tmp.root.toPath()
+        val legacy = dir.resolve(SheetStore.LEGACY_FILE_NAME)
+        Files.writeString(legacy, oldFile)
+        val store = SheetStore(dir.resolve(SheetStore.FILE_NAME))
+        store.save(store.load().rows.map { it.copy(producedAt = "01.08.2026") })
+        // 1.0.5 qayta ochildi va o‘z faylini bo‘sh jadval bilan saqladi.
+        Files.writeString(legacy, """{"format":"reaktiv-ombor","version":1,"reagents":[],"drafts":[]}""")
+        Files.setLastModifiedTime(legacy, java.nio.file.attribute.FileTime.fromMillis(System.currentTimeMillis() + 60_000))
+        val again = SheetStore(store.file).load()
+        assertEquals(3, again.rows.size)
+        assertEquals("01.08.2026", again.rows[0].producedAt)
+        assertTrue(again.warning!!.contains("Eski dastur"))
+    }
+
+    @Test
+    fun csvShowsTheExpiryColourOfAnUnfinishedRow() {
+        val row = SheetRow(1, "Eski", receivedAmount = "1000", unit = "ml", expiresAt = "10.10.2026", stockAmount = "500", createdAt = 1, legacyReceivedAt = "01.01.2026")
+        val line = SheetStore.toCsv(listOf(row), LocalDate.parse("2026-10-22")).removePrefix("\uFEFF").trimEnd().split("\r\n")[1]
+        assertEquals("1;Eski;;1000;ml;10.10.2026;500;;;500;-12;1 oydan kam (tugallanmagan)", line)
     }
 
     @Test

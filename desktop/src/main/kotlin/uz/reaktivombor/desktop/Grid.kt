@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -58,6 +60,7 @@ import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontStyle
@@ -155,14 +158,28 @@ fun SheetGrid(
 ) {
     val horizontal = rememberScrollState()
     val lastPress = remember { LastPress() }
-    val totalWidth = ROW_HEADER_WIDTH + Col.entries.sumOf { it.widthDp }
+    val density = LocalDensity.current
+
+    // Tanlangan katak doim to‘liq ko‘rinsin (tor oynada ham, klaviatura bilan yurilganda ham).
+    LaunchedEffect(selCol, selIndex, horizontal.viewportSize) {
+        if (selCol == Col.NAME) return@LaunchedEffect
+        val view = horizontal.viewportSize - with(density) { SCROLLBAR_GAP.dp.roundToPx() }
+        if (view <= 0) return@LaunchedEffect
+        val before = SCROLLED_COLS.takeWhile { it != selCol }.sumOf { it.widthDp }
+        val left = with(density) { before.dp.roundToPx() }
+        val right = with(density) { (before + selCol.widthDp).dp.roundToPx() }
+        when {
+            left < horizontal.value -> horizontal.scrollTo(left)
+            right > horizontal.value + view -> horizontal.scrollTo(right - view)
+        }
+    }
 
     Box(modifier.background(SheetColors.Background)) {
-        Column(Modifier.fillMaxSize().horizontalScroll(horizontal)) {
-            HeaderRow(selCol, sort, onSort, lastPress) { (rowId, cellCol) -> onSelect(rowId, cellCol, true) }
+        Column(Modifier.fillMaxSize()) {
+            HeaderRow(selCol, sort, onSort, lastPress, horizontal) { (rowId, cellCol) -> onSelect(rowId, cellCol, true) }
             LazyColumn(
                 state = listState,
-                modifier = Modifier.width(totalWidth.dp).weight(1f),
+                modifier = Modifier.fillMaxWidth().weight(1f),
                 // Pastdagi gorizontal aylantirish chizig‘i oxirgi qatorni yopmasin.
                 contentPadding = PaddingValues(bottom = 12.dp),
             ) {
@@ -173,6 +190,27 @@ fun SheetGrid(
                         line.check?.complete == false -> SheetColors.DraftRow
                         else -> SheetColors.Background
                     }
+                    val cell: @Composable (Col) -> Unit = { col ->
+                        val selected = index == selIndex && col == selCol
+                        DataCell(
+                            line = line,
+                            col = col,
+                            today = today,
+                            selected = selected,
+                            editing = selected && editing,
+                            editValue = editValue,
+                            cellFocus = cellFocus,
+                            autoFocus = autoFocus,
+                            lastPress = lastPress,
+                            onTap = { onSelect(line.row?.id, col, false) },
+                            onDoubleTap = { (rowId, cellCol) -> onSelect(rowId, cellCol, true) },
+                            onEditPress = onEditPress,
+                            onEditValue = onEditValue,
+                            onKey = onKey,
+                            onFocusLost = onFocusLost,
+                            onPickUnit = onPickUnit,
+                        )
+                    }
                     Row(Modifier.height(ROW_HEIGHT.dp).background(rowColor)) {
                         RowHeaderCell(
                             label = if (line.row == null) "+" else "${index + 1}",
@@ -180,26 +218,11 @@ fun SheetGrid(
                             onClick = { onSelect(line.row?.id, Col.NAME, false) },
                             onSecondaryClick = { line.row?.let { onRowMenu(it.id) } },
                         )
-                        Col.entries.forEach { col ->
-                            val selected = index == selIndex && col == selCol
-                            DataCell(
-                                line = line,
-                                col = col,
-                                today = today,
-                                selected = selected,
-                                editing = selected && editing,
-                                editValue = editValue,
-                                cellFocus = cellFocus,
-                                autoFocus = autoFocus,
-                                lastPress = lastPress,
-                                onTap = { onSelect(line.row?.id, col, false) },
-                                onDoubleTap = { (rowId, cellCol) -> onSelect(rowId, cellCol, true) },
-                                onEditPress = onEditPress,
-                                onEditValue = onEditValue,
-                                onKey = onKey,
-                                onFocusLost = onFocusLost,
-                                onPickUnit = onPickUnit,
-                            )
+                        // Reaktiv nomi chapda qotib turadi: o‘ngdagi ustunlarga aylantirilganda ham qaysi reaktiv ekani ko‘rinadi.
+                        cell(Col.NAME)
+                        Row(Modifier.weight(1f).horizontalScroll(horizontal)) {
+                            SCROLLED_COLS.forEach { cell(it) }
+                            Spacer(Modifier.width(SCROLLBAR_GAP.dp))
                         }
                     }
                 }
@@ -212,10 +235,16 @@ fun SheetGrid(
         // Oyna tor bo‘lsa (kichik ekran, 125% masshtab) o‘ngdagi ustunlarga yetish uchun.
         HorizontalScrollbar(
             adapter = rememberScrollbarAdapter(horizontal),
-            modifier = Modifier.align(Alignment.BottomStart).fillMaxWidth(),
+            modifier = Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(start = (ROW_HEADER_WIDTH + Col.NAME.widthDp).dp),
         )
     }
 }
+
+/** Nomdan keyingi ustunlar — ular gorizontal aylanadi (nom va qator raqami joyida qoladi). */
+private val SCROLLED_COLS = Col.entries.filter { it != Col.NAME }
+
+/** O‘ngdagi vertikal aylantirish chizig‘i sonlarni yopmasligi uchun bo‘sh joy. */
+private const val SCROLLBAR_GAP = 12
 
 private const val HEADER_HEIGHT = 52
 
@@ -225,6 +254,7 @@ private fun HeaderRow(
     sort: Pair<Col, Boolean>?,
     onSort: (Col) -> Unit,
     lastPress: LastPress,
+    horizontal: ScrollState,
     onDoubleTap: (Pair<Long?, Col>) -> Unit,
 ) {
     val doubleTap by rememberUpdatedState(onDoubleTap)
@@ -232,57 +262,77 @@ private fun HeaderRow(
         Box(
             Modifier.width(ROW_HEADER_WIDTH.dp).fillMaxHeight().background(SheetColors.HeaderBg).gridLines(),
         )
-        Col.entries.forEach { col ->
-            val selected = col == selCol
-            val arrow = when {
-                sort?.first != col -> ""
-                sort.second -> "  ▲"
-                else -> "  ▼"
-            }
-            Column(
-                Modifier
-                    .width(col.widthDp.dp)
-                    .fillMaxHeight()
-                    .background(if (selected) SheetColors.HeaderSelected else SheetColors.HeaderBg)
-                    .gridLines()
-                    // Katakni ikki marta bosishning ikkinchi bosishi sarlavhaga tushdi (birinchi bosish qizil ogohlantirishni
-                    // chiqarib, jadval pastga siljidi) — saralamaymiz, birinchi bosish tanlagan katakni ochamiz.
-                    .pointerInput(Unit) {
-                        awaitPointerEventScope {
-                            while (true) {
-                                val event = awaitPointerEvent(PointerEventPass.Initial)
-                                if (event.type != PointerEventType.Press) continue
-                                val now = event.changes.firstOrNull()?.uptimeMillis ?: 0L
-                                val previous = lastPress.cell?.takeIf { now - lastPress.at <= MULTI_CLICK_MS }
-                                lastPress.cell = null
-                                val clicks = event.awtEventOrNull?.clickCount ?: 1
-                                if (clicks >= 2 && previous != null && !event.buttons.isSecondaryPressed) {
-                                    event.changes.forEach { it.consume() }
-                                    doubleTap(previous)
-                                }
-                            }
+        HeaderCell(Col.NAME, selCol, sort, onSort, lastPress) { doubleTap(it) }
+        Row(Modifier.weight(1f).horizontalScroll(horizontal)) {
+            SCROLLED_COLS.forEach { col -> HeaderCell(col, selCol, sort, onSort, lastPress) { doubleTap(it) } }
+            Spacer(Modifier.width(SCROLLBAR_GAP.dp).fillMaxHeight().background(SheetColors.HeaderBg))
+        }
+    }
+}
+
+@Composable
+private fun HeaderCell(
+    col: Col,
+    selCol: Col,
+    sort: Pair<Col, Boolean>?,
+    onSort: (Col) -> Unit,
+    lastPress: LastPress,
+    onDoubleTap: (Pair<Long?, Col>) -> Unit,
+) {
+    val doubleTap by rememberUpdatedState(onDoubleTap)
+    val arrow = when {
+        sort?.first != col -> ""
+        sort.second -> "  ▲"
+        else -> "  ▼"
+    }
+    Column(
+        Modifier
+            .width(col.widthDp.dp)
+            .fillMaxHeight()
+            .background(if (col == selCol) SheetColors.HeaderSelected else SheetColors.HeaderBg)
+            .gridLines()
+            // Katakni ikki marta bosishning ikkinchi bosishi sarlavhaga tushdi (birinchi bosish qizil ogohlantirishni
+            // chiqarib, jadval pastga siljidi) — saralamaymiz, birinchi bosish tanlagan katakni ochamiz.
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        if (event.type != PointerEventType.Press) continue
+                        val now = event.changes.firstOrNull()?.uptimeMillis ?: 0L
+                        val previous = lastPress.cell?.takeIf { now - lastPress.at <= MULTI_CLICK_MS }
+                        lastPress.cell = null
+                        val clicks = event.awtEventOrNull?.clickCount ?: 1
+                        if (clicks >= 2 && previous != null && !event.buttons.isSecondaryPressed) {
+                            event.changes.forEach { it.consume() }
+                            doubleTap(previous)
                         }
                     }
-                    .pointerInput(col) { detectTapGestures(onTap = { onSort(col) }) }
-                    .semantics { contentDescription = "${col.title} ustuni bo‘yicha saralash" },
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center,
-            ) {
-                Text(col.letter.toString(), fontSize = 10.sp, lineHeight = 12.sp, color = SheetColors.Muted)
-                // Uzun sarlavhalar ("Ishlab chiqarilgan vaqti") ikki qatorga bo‘linadi.
-                Text(
-                    col.title + arrow,
-                    fontSize = 12.sp,
-                    lineHeight = 14.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = SheetColors.HeaderText,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.padding(horizontal = 4.dp),
-                )
+                }
             }
-        }
+            .pointerInput(col) { detectTapGestures(onTap = { onSort(col) }) }
+            .semantics { contentDescription = "${col.title} ustuni bo‘yicha saralash" },
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        // Saralash belgisi harf qatorida: uzun sarlavha ikki qatorga sig‘may qisqartirilganda ham ko‘rinadi.
+        Text(
+            col.letter.toString() + arrow,
+            fontSize = 10.sp,
+            lineHeight = 12.sp,
+            color = if (arrow.isEmpty()) SheetColors.Muted else SheetColors.HeaderText,
+        )
+        // Uzun sarlavhalar ("Ishlab chiqarilgan vaqti") ikki qatorga bo‘linadi.
+        Text(
+            col.title,
+            fontSize = 12.sp,
+            lineHeight = 14.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = SheetColors.HeaderText,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(horizontal = 4.dp),
+        )
     }
 }
 

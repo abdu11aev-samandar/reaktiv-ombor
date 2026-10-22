@@ -139,7 +139,8 @@ data class SheetRow(
     val name: String = "",
     val producedAt: String = "",
     val receivedAmount: String = "",
-    val unit: String = "g",
+    // Birlik majburiy: yangi qatorda tanlanmaguncha bo‘sh (gramm deb jimgina yozilib qolmasin).
+    val unit: String = "",
     val expiresAt: String = "",
     val stockAmount: String = "",
     val department: String = "",
@@ -172,10 +173,11 @@ data class SheetRow(
         Col.REMAINDER, Col.DAYS_LEFT -> this
     }
 
+    /** Eski «Kelgan vaqt» ham ma’lumot: faqat shu sana yozilgan eski qator bo‘sh hisoblanmaydi (saqlanadi va ko‘rinadi). */
     val isBlank: Boolean
-        get() = Col.entries.all { !it.editable || it == Col.UNIT || this[it].isBlank() }
+        get() = legacyReceivedAt.isBlank() && Col.entries.all { !it.editable || it == Col.UNIT || this[it].isBlank() }
 
-    fun check(): RowCheck {
+    fun check(today: LocalDate = LocalDate.now()): RowCheck {
         val errors = linkedMapOf<Col, String>()
 
         val trimmed = name.trim()
@@ -188,8 +190,12 @@ data class SheetRow(
         if (producedAt.isBlank() && legacyReceivedAt.isNotBlank()) {
             errors[Col.PRODUCED] = "Ishlab chiqarilgan vaqtini kiriting (eski jadvaldagi «Kelgan vaqt»: ${displayDate(legacyReceivedAt)})."
         }
+        // Kelajakdagi sana — xato (masalan, 2062 yoki "99" → 2099): xato aynan shu katakda ko‘rinsin.
+        if (produced != null && produced.isAfter(today)) {
+            errors[Col.PRODUCED] = "Ishlab chiqarilgan vaqti (${DateText.format(produced)}) bugundan keyin bo‘lishi mumkin emas."
+        }
         val expires = date(expiresAt, Col.EXPIRES, "Yaroqlilik muddati", "17.10.2027", errors)
-        if (produced != null && expires != null && expires.isBefore(produced)) {
+        if (produced != null && expires != null && expires.isBefore(produced) && Col.PRODUCED !in errors) {
             errors[Col.EXPIRES] = "Yaroqlilik muddati ishlab chiqarilgan vaqtdan oldin bo‘lishi mumkin emas."
         }
 

@@ -144,4 +144,25 @@ class SheetTest {
         assertFalse(DateText.isAmbiguous("5/5/2026")) // ikki xil o‘qilishi bir xil
         assertFalse(DateText.isAmbiguous("11.12.2026"))
     }
+
+    @Test
+    fun aManufactureDateInTheFutureIsFlaggedOnItsOwnCell() {
+        val check = xloroform.copy(producedAt = "01.01.99", expiresAt = "01.01.2028").check(today)
+        assertEquals("Ishlab chiqarilgan vaqti (01.01.2099) bugundan keyin bo‘lishi mumkin emas.", check.errors[Col.PRODUCED])
+        assertNull(check.errors[Col.EXPIRES])
+        assertTrue(xloroform.copy(producedAt = "21.10.2026").check(today).complete) // bugun — mumkin
+    }
+
+    @Test
+    fun aNewRowAsksForItsUnit() {
+        val row = SheetRow(1, "Etil spirti", "01.09.2026", "5", expiresAt = "01.09.2028", stockAmount = "5", createdAt = 1)
+        assertEquals("O‘lchov birligi: l, ml, kg, g yoki dona.", row.check(today).errors[Col.UNIT])
+    }
+
+    @Test
+    fun anOldRowWithOnlyItsArrivalDateIsNotBlank() {
+        val row = SheetRow(1, createdAt = 1, legacyReceivedAt = "20.09.2026")
+        assertFalse(row.isBlank)
+        assertTrue(row.check(today).errors.getValue(Col.PRODUCED).contains("20.09.2026"))
+    }
 }

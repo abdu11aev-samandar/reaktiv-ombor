@@ -26,7 +26,7 @@ class SheetStateTest {
         val id = s.setCell(null, Col.NAME, "Ammiak")
         s.setCell(id, Col.UNIT, "ml")
         assertTrue(s.undo())
-        assertEquals("g", s.rows.single().unit)
+        assertEquals("", s.rows.single().unit) // birlik so‘ralmaguncha bo‘sh
         assertTrue(s.undo())
         assertTrue(s.rows.isEmpty())
         assertFalse(s.undo())

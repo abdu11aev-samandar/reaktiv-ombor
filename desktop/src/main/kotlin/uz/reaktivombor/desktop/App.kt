@@ -200,13 +200,13 @@ private fun AppContent(
     val listState = rememberLazyListState()
 
     // ---------- Ko‘rinish: qidiruv, filtr, saralash ----------
-    val checks = remember(state.rows) { state.rows.associate { it.id to it.check() } }
+    val checks = remember(state.rows, today) { state.rows.associate { it.id to it.check(today) } }
     val visible = visibleRows(state.rows, checks, search, filter, sort, pinned, today, frozen)
     val lines = visible.map { GridLine(it, checks[it.id]) } + GridLine(null, null)
 
     /** Hodisa paytidagi (yangi) holat — kompozitsiyadagi ro‘yxat eskirgan bo‘lishi mumkin. */
     fun freshVisible(): List<SheetRow> =
-        visibleRows(state.rows, state.rows.associate { it.id to it.check() }, search, filter, sort, pinned, today, frozen)
+        visibleRows(state.rows, state.rows.associate { it.id to it.check(today) }, search, filter, sort, pinned, today, frozen)
 
     fun indexIn(rows: List<SheetRow>): Int =
         if (selId == null) rows.size else rows.indexOfFirst { it.id == selId }.let { if (it < 0) 0 else it }
@@ -255,6 +255,16 @@ private fun AppContent(
     }
 
     fun rawOf(id: Long?, col: Col): String = id?.let { i -> state.rows.firstOrNull { it.id == i }?.get(col) } ?: ""
+
+    /** Ctrl+C / Ctrl+X: hisoblanadigan ustunlarda (Qoldiq, Qolgan muddat) ko‘rinib turgan son nusxalanadi. */
+    fun copyOf(id: Long?, col: Col): String {
+        if (col.editable) return rawOf(id, col)
+        val check = id?.let { i -> state.rows.firstOrNull { it.id == i } }?.check(today) ?: return ""
+        return when (col) {
+            Col.REMAINDER -> check.remainder?.let(Amounts::forInput) ?: ""
+            else -> check.daysLeft(today)?.toString() ?: ""
+        }
+    }
 
     fun viewChanged() {
         pinned = emptySet()
@@ -460,9 +470,9 @@ private fun AppContent(
             return when (event.key) {
                 Key.Z -> { if (shift) redo() else undo(); true }
                 Key.Y -> { redo(); true }
-                Key.C -> { clipboard.setText(AnnotatedString(rawOf(selId, selCol))); true }
+                Key.C -> { clipboard.setText(AnnotatedString(copyOf(selId, selCol))); true }
                 Key.X -> {
-                    clipboard.setText(AnnotatedString(rawOf(selId, selCol)))
+                    clipboard.setText(AnnotatedString(copyOf(selId, selCol)))
                     if (selCol.editable && selId != null) setCell("")
                     true
                 }
@@ -763,18 +773,20 @@ fun visibleRows(
 }
 
 private fun rowComparator(col: Col, ascending: Boolean): Comparator<SheetRow> {
-    val base: Comparator<SheetRow> = when (col) {
-        Col.NAME -> compareBy { searchKey(it.name.trim()) }
-        Col.PRODUCED -> compareBy(nullsLast()) { DateText.parse(it.producedAt) }
-        Col.EXPIRES, Col.DAYS_LEFT -> compareBy(nullsLast()) { DateText.parse(it.expiresAt) }
-        Col.RECEIVED_AMOUNT -> compareBy(nullsLast()) { Amounts.parse(it.receivedAmount) }
-        Col.STOCK -> compareBy(nullsLast()) { Amounts.parse(it.stockAmount) }
-        Col.ISSUED -> compareBy(nullsLast()) { Amounts.parse(it.issuedAmount) }
-        Col.REMAINDER -> compareBy(nullsLast()) { it.check().remainder }
-        Col.UNIT -> compareBy { it.unit }
-        Col.DEPARTMENT -> compareBy(nullsLast()) { it.department.ifBlank { null } }
+    // Bo‘sh kataklar Excel’dagidek ikkala yo‘nalishda ham oxirida qoladi.
+    fun <T : Comparable<T>> by(key: (SheetRow) -> T?): Comparator<SheetRow> =
+        compareBy(nullsLast(if (ascending) naturalOrder<T>() else reverseOrder<T>()), key)
+    return when (col) {
+        Col.NAME -> by { searchKey(it.name.trim()).ifEmpty { null } }
+        Col.PRODUCED -> by { DateText.parse(it.producedAt) }
+        Col.EXPIRES, Col.DAYS_LEFT -> by { DateText.parse(it.expiresAt) }
+        Col.RECEIVED_AMOUNT -> by { Amounts.parse(it.receivedAmount) }
+        Col.STOCK -> by { Amounts.parse(it.stockAmount) }
+        Col.ISSUED -> by { Amounts.parse(it.issuedAmount) }
+        Col.REMAINDER -> by { it.check().remainder }
+        Col.UNIT -> by { it.unit.ifBlank { null } }
+        Col.DEPARTMENT -> by { it.department.ifBlank { null } }
     }
-    return if (ascending) base else base.reversed()
 }
 
 @Composable

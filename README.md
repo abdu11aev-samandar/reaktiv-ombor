@@ -133,11 +133,11 @@ Ustunlar (laboratoriyadagi qog‘oz jadval tartibida): **Reaktiv nomi · Ishlab 
 - **Ctrl+Z / Ctrl+Y** — bekor qilish / qayta bajarish, **Ctrl+C / Ctrl+V** — nusxa olish / qo‘yish (Excel’dan bir nechta qatorni birdaniga qo‘yish mumkin), **Ctrl+;** — bugungi sana, **Ctrl+F** — qidiruv, **Ctrl+−** — qatorni o‘chirish
 - Ustun sarlavhasini bosish — saralash (▲/▼), rang bo‘yicha filtr, nom bo‘yicha qidiruv
 - Hali to‘ldirilmagan qator sariq fonda, yetishmayotgan kataklar burchagida qizil belgi — sichqoncha bilan ustiga borilsa sababi chiqadi
-- Har bir o‘zgarish avtomatik saqlanadi: `%APPDATA%\Reaktivlar\reaktivlar.json` (oldingi holat — `reaktivlar.bak.json`)
+- Har bir o‘zgarish avtomatik saqlanadi: `%APPDATA%\Reaktivlar\reaktivlar-jadval.json` (oldingi holat — `reaktivlar-jadval.bak.json`)
 - **Fayl** menyusi: zaxira faylini ochish (eski jadval va telefon zaxirasi ham), zaxira nusxa saqlash, Excel uchun CSV
 - Excel’dan qo‘yilgan «/» li sanalar kompyuterning mintaqaviy formati bo‘yicha o‘qiladi: «English (United States)» bo‘lsa oy/kun/yil, aks holda kun/oy/yil
 - Windows o‘chirilganda yoki qayta yuklanganda ham yozib turilgan katak saqlanadi
-- Eski jadvaldagi ma’lumotlar (1.0.5 gacha) birinchi ochilishda yangi ustunlarga o‘tkaziladi: eski «Berilgan miqdor» → «Kelgan miqdor»; «Kelgan vaqt» ustuni yo‘q, lekin qiymati faylda saqlanadi va «Ishlab chiqarilgan vaqti» katagida eslatma bo‘lib chiqadi. Asl fayl `reaktivlar-eski-jadval.json` nomi bilan qoladi
+- Eski jadvaldagi ma’lumotlar (1.0.5 gacha) birinchi ochilishda yangi ustunlarga o‘tkaziladi: eski «Berilgan miqdor» → «Kelgan miqdor»; «Kelgan vaqt» ustuni yo‘q, lekin qiymati faylda saqlanadi va «Ishlab chiqarilgan vaqti» katagida eslatma bo‘lib chiqadi. Eski fayl (`reaktivlar.json`) faqat o‘qiladi va o‘zgarishsiz qoladi — eski dastur yana ochilsa ham yangi jadvalga tegmaydi
 - Kompyuter dasturining jadvali endi telefon ilovasinikidan farq qiladi: telefon yangi faylni ochmaydi (“dasturni yangilang” deydi)
 
 ### O‘rnatish
@@ -152,7 +152,7 @@ GitHub → **Actions** → «Windows» → **Reaktivlar-Linux-deb** artefaktidag
 sudo apt install ./reaktivlar_*_amd64.deb
 ```
 
-Dastur menyuning «Ofis» bo‘limida chiqadi (yoki `/opt/reaktivlar/bin/Reaktivlar`). Ma’lumotlar: `~/.local/share/reaktivlar/reaktivlar.json`. O‘chirish: `sudo apt remove reaktivlar` (ma’lumotlar qoladi). Linux’da tizimdan chiqish yoki kompyuterni o‘chirishdan oldin yozib turgan katakda Enter bosing yoki dasturni yoping — aks holda o‘sha katak saqlanmay qolishi mumkin.
+Dastur menyuning «Ofis» bo‘limida chiqadi (yoki `/opt/reaktivlar/bin/Reaktivlar`). Ma’lumotlar: `~/.local/share/reaktivlar/reaktivlar-jadval.json`. O‘chirish: `sudo apt remove reaktivlar` (ma’lumotlar qoladi). Linux’da tizimdan chiqish yoki kompyuterni o‘chirishdan oldin yozib turgan katakda Enter bosing yoki dasturni yoping — aks holda o‘sha katak saqlanmay qolishi mumkin.
 
 ### Yig‘ish
 
