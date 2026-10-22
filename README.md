@@ -122,16 +122,23 @@ Kalit topilmasa, APK sinov (debug) kaliti bilan imzolanadi — bunday faylni sin
 
 `desktop/` papkada kompyuter uchun dastur bor (Kotlin, Compose Desktop). Ekrani **Excel jadvaliga o‘xshaydi**, internet kerak emas.
 
+Ustunlar (laboratoriyadagi qog‘oz jadval tartibida): **Reaktiv nomi · Ishlab chiqarilgan vaqti · Kelgan miqdor · O‘lchov birligi** (l, ml, kg, g, dona) **· Yaroqlilik muddati · Ombordagi miqdor · Bo‘lim** (Gistologiya, Biologiya, Morfologiya) **· Berilgan miqdor · Qoldiq · Qolgan muddat (kun)**.
+
+- **Qoldiq** = Ombordagi miqdor − Berilgan miqdor, **Qolgan muddat** = yaroqlilik muddatigacha qolgan kunlar — ikkalasini dastur o‘zi hisoblaydi (ularga yozilmaydi)
+- Bo‘lim va berilgan miqdor ixtiyoriy, lekin birga yoziladi; berilgan miqdor ombordagidan ko‘p bo‘lishi mumkin emas. Bo‘lim uchun birinchi harf yetadi (g → Gistologiya)
+- Muddati 3 oydan ko‘p — nomi yashil, 1–3 oy — sariq, 1 oydan kam (yoki o‘tgan) — nomi va **butun qator qizil**
+
 - Kataklarga to‘g‘ridan-to‘g‘ri yoziladi (Excel’dagi kabi): **Enter** — keyingi qator (Tab bilan yurilgan bo‘lsa — qator boshidagi ustunga), **Tab** — o‘ngga, strelkalar — yurish, **F2** yoki ikki marta bosish — katakni tahrirlash (yozib turganda F2 yoki katak ichiga bosish — strelkalar matn ichida yuradi), **Esc** — bekor qilish, **Delete** — katakni tozalash
 - Filtr, qidiruv yoki saralash yoqilganda tahrirlangan qator joyida qoladi (ro‘yxat filtr qayta tanlanganda yangilanadi)
 - **Ctrl+Z / Ctrl+Y** — bekor qilish / qayta bajarish, **Ctrl+C / Ctrl+V** — nusxa olish / qo‘yish (Excel’dan bir nechta qatorni birdaniga qo‘yish mumkin), **Ctrl+;** — bugungi sana, **Ctrl+F** — qidiruv, **Ctrl+−** — qatorni o‘chirish
 - Ustun sarlavhasini bosish — saralash (▲/▼), rang bo‘yicha filtr, nom bo‘yicha qidiruv
-- Reaktiv nomi muddatga qarab bo‘yaladi (telefon va web ilovadagi bilan bir xil qoida); hali to‘ldirilmagan qator sariq fonda, yetishmayotgan kataklar qizil — sichqoncha bilan ustiga borilsa sababi chiqadi
+- Hali to‘ldirilmagan qator sariq fonda, yetishmayotgan kataklar burchagida qizil belgi — sichqoncha bilan ustiga borilsa sababi chiqadi
 - Har bir o‘zgarish avtomatik saqlanadi: `%APPDATA%\Reaktivlar\reaktivlar.json` (oldingi holat — `reaktivlar.bak.json`)
-- **Fayl** menyusi: telefon zaxirasini ochish, telefon uchun zaxira saqlash (telefonda ⋮ → «Zaxiradan tiklash»; tugallanmagan qatorlar ham faylda qoladi, ularni faqat kompyuter o‘qiydi), Excel uchun CSV
+- **Fayl** menyusi: zaxira faylini ochish (eski jadval va telefon zaxirasi ham), zaxira nusxa saqlash, Excel uchun CSV
 - Excel’dan qo‘yilgan «/» li sanalar kompyuterning mintaqaviy formati bo‘yicha o‘qiladi: «English (United States)» bo‘lsa oy/kun/yil, aks holda kun/oy/yil
 - Windows o‘chirilganda yoki qayta yuklanganda ham yozib turilgan katak saqlanadi
-- Ma’lumotlar fayli telefon zaxirasi formatida — uni to‘g‘ridan-to‘g‘ri telefonga ko‘chirib tiklash ham mumkin
+- Eski jadvaldagi ma’lumotlar (1.0.5 gacha) birinchi ochilishda yangi ustunlarga o‘tkaziladi: eski «Berilgan miqdor» → «Kelgan miqdor»; «Kelgan vaqt» ustuni yo‘q, lekin qiymati faylda saqlanadi va «Ishlab chiqarilgan vaqti» katagida eslatma bo‘lib chiqadi. Asl fayl `reaktivlar-eski-jadval.json` nomi bilan qoladi
+- Kompyuter dasturining jadvali endi telefon ilovasinikidan farq qiladi: telefon yangi faylni ochmaydi (“dasturni yangilang” deydi)
 
 ### O‘rnatish
 

@@ -71,8 +71,6 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.PopupProperties
 import uz.reaktivombor.domain.Amounts
 import uz.reaktivombor.domain.ExpiryStatus
-import uz.reaktivombor.domain.daysUntil
-import uz.reaktivombor.domain.expiryHint
 import java.awt.Toolkit
 import java.time.LocalDate
 
@@ -89,6 +87,8 @@ object SheetColors {
     val ErrorBg = Color(0xFFFDECEC)
     val Error = Color(0xFFB91C1C)
     val DraftRow = Color(0xFFFFFBEA)
+    /** Muddati 1 oydan kam qolgan (yoki o‘tgan) reaktivning butun qatori. */
+    val RedRow = Color(0xFFFDE2E2)
 
     val pill = mapOf(
         ExpiryStatus.GREEN to (Color(0xFF15803D) to Color.White),
@@ -167,7 +167,13 @@ fun SheetGrid(
                 contentPadding = PaddingValues(bottom = 12.dp),
             ) {
                 itemsIndexed(lines, key = { _, line -> line.row?.id ?: -1L }) { index, line ->
-                    Row(Modifier.height(ROW_HEIGHT.dp).background(if (line.row != null && line.check?.complete == false) SheetColors.DraftRow else SheetColors.Background)) {
+                    val rowColor = when {
+                        line.row == null || line.row.isBlank -> SheetColors.Background
+                        line.check?.status(today) == ExpiryStatus.RED -> SheetColors.RedRow
+                        line.check?.complete == false -> SheetColors.DraftRow
+                        else -> SheetColors.Background
+                    }
+                    Row(Modifier.height(ROW_HEIGHT.dp).background(rowColor)) {
                         RowHeaderCell(
                             label = if (line.row == null) "+" else "${index + 1}",
                             selected = index == selIndex,
@@ -211,7 +217,7 @@ fun SheetGrid(
     }
 }
 
-private const val HEADER_HEIGHT = 44
+private const val HEADER_HEIGHT = 52
 
 @Composable
 private fun HeaderRow(
@@ -263,15 +269,17 @@ private fun HeaderRow(
                 verticalArrangement = Arrangement.Center,
             ) {
                 Text(col.letter.toString(), fontSize = 10.sp, lineHeight = 12.sp, color = SheetColors.Muted)
+                // Uzun sarlavhalar ("Ishlab chiqarilgan vaqti") ikki qatorga bo‘linadi.
                 Text(
                     col.title + arrow,
-                    fontSize = 12.5.sp,
-                    lineHeight = 16.sp,
+                    fontSize = 12.sp,
+                    lineHeight = 14.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = SheetColors.HeaderText,
-                    maxLines = 1,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(horizontal = 6.dp),
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(horizontal = 4.dp),
                 )
             }
         }
@@ -340,25 +348,20 @@ private fun DataCell(
             displayColor = SheetColors.Muted
             italic = true
         }
-        col == Col.STATUS -> {
-            val values = check?.values
-            if (values != null && status != null) {
-                display = expiryHint(daysUntil(values.expiresAt, today))
+        col == Col.DAYS_LEFT -> {
+            display = cellText(row, col, check, today)
+            if (status != null) {
                 displayColor = SheetColors.hint.getValue(status)
                 bold = status == ExpiryStatus.RED
-            } else if (row.isBlank) {
-                display = ""
-            } else {
-                display = "Tugallanmagan: ${check?.errors?.size ?: 0} ta maydon"
-                displayColor = SheetColors.Muted
-                italic = true
             }
         }
-        col == Col.GIVEN || col == Col.STOCK -> display = displayAmount(row[col])
-        col == Col.RECEIVED || col == Col.EXPIRES -> display = displayDate(row[col])
-        else -> display = row[col]
+        col == Col.REMAINDER -> {
+            display = cellText(row, col, check, today)
+            bold = display.isNotEmpty()
+        }
+        else -> display = cellText(row, col, check, today)
     }
-    val alignEnd = col == Col.GIVEN || col == Col.STOCK || col == Col.RECEIVED || col == Col.EXPIRES
+    val alignEnd = col.alignEnd
 
     val tap by rememberUpdatedState(onTap)
     val doubleTap by rememberUpdatedState(onDoubleTap)
@@ -440,18 +443,19 @@ private fun DataCell(
                         .border(2.dp, SheetColors.Accent)
                         .then(if (editing) Modifier else Modifier.pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent() } }),
                 )
-                if (col == Col.UNIT && editing) {
+                if (col.choices.isNotEmpty() && editing) {
                     DropdownMenu(
                         expanded = true,
                         onDismissRequest = {},
                         offset = DpOffset(0.dp, 2.dp),
                         properties = PopupProperties(focusable = false),
                     ) {
-                        // F2 / ikki marta bosilganda (matn — hozirgi birlik) hammasi; yozilganda — mos keladiganlari.
+                        // F2 / ikki marta bosilganda (matn — hozirgi qiymat) hammasi; yozilganda — mos keladiganlari.
                         val typed = editValue.text.trim().lowercase()
-                        val options = if (typed.isEmpty() || typed == row?.unit) Amounts.UNITS else Amounts.UNITS.filter { it.startsWith(typed) }
-                        options.ifEmpty { Amounts.UNITS }.forEach { unit ->
-                            DropdownMenuItem(text = { Text(unit) }, onClick = { onPickUnit(unit) })
+                        val current = row?.get(col)?.lowercase()
+                        val options = if (typed.isEmpty() || typed == current) col.choices else col.choices.filter { it.lowercase().startsWith(typed) }
+                        options.ifEmpty { col.choices }.forEach { choice ->
+                            DropdownMenuItem(text = { Text(choice) }, onClick = { onPickUnit(choice) })
                         }
                     }
                 }

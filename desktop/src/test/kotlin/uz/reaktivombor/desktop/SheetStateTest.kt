@@ -26,7 +26,7 @@ class SheetStateTest {
         val id = s.setCell(null, Col.NAME, "Ammiak")
         s.setCell(id, Col.UNIT, "ml")
         assertTrue(s.undo())
-        assertEquals("gr", s.rows.single().unit)
+        assertEquals("g", s.rows.single().unit)
         assertTrue(s.undo())
         assertTrue(s.rows.isEmpty())
         assertFalse(s.undo())
@@ -51,21 +51,21 @@ class SheetStateTest {
     @Test
     fun pastingIntoAColumnOnlyChangesThatColumnAndTheOnesToTheRight() {
         val s = state(listOf(SheetRow(1, "A", "01.01.2026", createdAt = 1), SheetRow(2, "B", createdAt = 2)))
-        s.paste("02.02.2026\n03.03.2026", targetIds = listOf(1L, 2L), startIndex = 0, startCol = Col.RECEIVED)
+        s.paste("02.02.2026\n03.03.2026", targetIds = listOf(1L, 2L), startIndex = 0, startCol = Col.PRODUCED)
         assertEquals(listOf("A", "B"), s.rows.map { it.name })
-        assertEquals(listOf("02.02.2026", "03.03.2026"), s.rows.map { it.receivedAt })
+        assertEquals(listOf("02.02.2026", "03.03.2026"), s.rows.map { it.producedAt })
     }
 
     @Test
     fun statusColumnIsReadOnly() {
         val s = state(listOf(SheetRow(1, "A", createdAt = 1)))
-        s.setCell(1, Col.STATUS, "x")
+        s.setCell(1, Col.REMAINDER, "x")
         assertFalse(s.canUndo)
     }
 
     @Test
     fun excelQuotedMultilineCellStaysInOneRow() {
-        val other = SheetRow(2, "Eski 2", "01.01.2026", "5", "gr", "01.01.2028", "5", createdAt = 2)
+        val other = SheetRow(2, "Eski 2", "01.01.2026", "5", "g", "01.01.2028", "5", createdAt = 2)
         val s = state(listOf(SheetRow(1, "Eski 1", createdAt = 1), other))
         val count = s.paste("\"Natriy xlorid\n(osh tuzi)\"\t01.09.2026\t1000\tgr\t01.09.2027\t750\r\n", listOf(1L, 2L), 0, Col.NAME)
         assertEquals(1, count)
@@ -85,7 +85,7 @@ class SheetStateTest {
     fun pasteCountsOnlyRowsThatChanged() {
         val s = state(listOf(SheetRow(1, "A", createdAt = 1)))
         assertEquals(0, s.paste("ml\nkg\nl", listOf(1L), 1, Col.UNIT))
-        assertEquals(0, s.paste("x\ty\nz\tw", listOf(1L), 0, Col.STATUS))
+        assertEquals(0, s.paste("x\ty\nz\tw", listOf(1L), 0, Col.REMAINDER))
         assertEquals(0, s.paste("A\n", listOf(1L), 0, Col.NAME))
         assertFalse(s.canUndo)
         assertEquals(1, s.rows.size)
@@ -95,7 +95,7 @@ class SheetStateTest {
     fun usDatesCopiedFromExcelAreReadMonthFirst() {
         val s = state()
         s.paste("Xloroform\t8/10/2026\t500\tml\t11/5/2026\t320\nAmmiak\t9/30/2026\t1\tl\t3/1/2027\t1", emptyList(), 0, Col.NAME, pcMonthFirst = true)
-        assertEquals(listOf(LocalDate.parse("2026-08-10"), LocalDate.parse("2026-09-30")), s.rows.map { DateText.parse(it.receivedAt) })
+        assertEquals(listOf(LocalDate.parse("2026-08-10"), LocalDate.parse("2026-09-30")), s.rows.map { DateText.parse(it.producedAt) })
         assertEquals(listOf(LocalDate.parse("2026-11-05"), LocalDate.parse("2027-03-01")), s.rows.map { DateText.parse(it.expiresAt) })
     }
 
@@ -117,9 +117,9 @@ class SheetStateTest {
         val s = state()
         val block = "Xloroform\t01/09/2026\t500\tml\t05/11/2026\t320\nNaftol-2\t02/06/2026\t100\tgr\t5/13/2027\t40"
         s.paste(block, emptyList(), 0, Col.NAME, pcMonthFirst = false)
-        assertEquals(LocalDate.parse("2026-09-01"), DateText.parse(s.rows[0].receivedAt))
+        assertEquals(LocalDate.parse("2026-09-01"), DateText.parse(s.rows[0].producedAt))
         assertEquals(LocalDate.parse("2026-11-05"), DateText.parse(s.rows[0].expiresAt))
-        assertEquals(LocalDate.parse("2026-06-02"), DateText.parse(s.rows[1].receivedAt))
+        assertEquals(LocalDate.parse("2026-06-02"), DateText.parse(s.rows[1].producedAt))
     }
 
     @Test
@@ -129,7 +129,7 @@ class SheetStateTest {
         assertEquals(2L to Col.STOCK, changedSpot(listOf(a, b), listOf(a, b.copy(stockAmount = "5"))))
         assertEquals(2L to null, changedSpot(listOf(a), listOf(a, b))) // qaytgan (o‘chirilgan) qator
         assertEquals(2L to null, changedSpot(listOf(a, b), listOf(a))) // bekor qilingan yangi qator
-        assertEquals(1L to null, changedSpot(listOf(a), listOf(a.copy(name = "X", receivedAt = ""))))
+        assertEquals(1L to null, changedSpot(listOf(a), listOf(a.copy(name = "X", producedAt = ""))))
         assertEquals(null, changedSpot(listOf(a), listOf(a)))
     }
 }

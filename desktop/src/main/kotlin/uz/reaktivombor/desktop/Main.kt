@@ -98,7 +98,7 @@ private fun confirmCloseWithoutSaving(error: Throwable): Boolean {
         null,
         "Ma’lumotlarni saqlab bo‘lmadi:\n${error.message ?: error}\n\n" +
             "Hozir yopilsa, oxirgi o‘zgarishlar yo‘qoladi. Dasturni ochiq qoldirib,\n" +
-            "«Fayl» → «Telefon uchun zaxira saqlash…» orqali boshqa joyga (masalan, fleshkaga) saqlab olishingiz mumkin.",
+            "«Fayl» → «Zaxira nusxa saqlash…» orqali boshqa joyga (masalan, fleshkaga) saqlab olishingiz mumkin.",
         "Reaktivlar hisobi",
         JOptionPane.DEFAULT_OPTION,
         JOptionPane.WARNING_MESSAGE,

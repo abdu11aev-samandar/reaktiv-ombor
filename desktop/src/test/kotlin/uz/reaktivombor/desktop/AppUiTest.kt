@@ -85,7 +85,7 @@ class AppUiTest {
         assertEquals("Ammiak", added.name)
         assertEquals("ml", added.unit)
         assertTrue(added.check().complete)
-        onNodeWithText("11 kun qoldi").assertExists()
+        onNodeWithText("11").assertExists() // «Qolgan muddat (kun)»
         screenshot("02-yangi-qator")
 
         // Ctrl+Z — oxirgi katak bekor qilinadi, qator tugallanmagan bo‘lib qoladi.
@@ -94,7 +94,7 @@ class AppUiTest {
         }
         waitForIdle()
         assertEquals("", state.rows.last().stockAmount)
-        onNodeWithText("Tugallanmagan: 1 ta maydon").assertExists()
+        assertEquals(setOf(Col.STOCK), state.rows.last().check().errors.keys)
         screenshot("03-tugallanmagan")
     }
 
@@ -136,7 +136,7 @@ class AppUiTest {
         type("30.09.2026") // Enter bosilmadi — oyna yopilyapti
         waitForIdle()
         runOnIdle { state.flushPendingEdit() }
-        assertEquals("30.09.2026", state.byName("Ammiak").receivedAt)
+        assertEquals("30.09.2026", state.byName("Ammiak").producedAt)
     }
 
     @Test
@@ -179,13 +179,13 @@ class AppUiTest {
     fun arrowsLeaveATypedCellAndEnterMovesDownWithoutEditing() = runComposeUiTest {
         val state = SheetState(SheetStore.fromJson(SAMPLE))
         app(state)
-        onNodeWithText("180,5").performClick() // Shavel kislota qoldig‘i
+        onNodeWithTag("cell-3-F").performClick() // Shavel kislota — ombordagi miqdor
         type("35", Key.DirectionRight)
         waitForIdle()
         assertEquals("35", state.byName("Shavel kislota").stockAmount)
         onNodeWithText("G3").assertExists() // tanlov o‘ngdagi “Holat” katagiga o‘tdi
 
-        onNodeWithText("750").performClick() // Etil spirti qoldig‘i
+        onNodeWithTag("cell-1-F").performClick() // Etil spirti — ombordagi miqdor
         onNodeWithTag("cell-editor").key(Key.Enter) // tahrirlamaydi, pastga tushadi
         type("1", Key.Enter)
         waitForIdle()
@@ -239,7 +239,7 @@ class AppUiTest {
         val state = SheetState(SheetStore.fromJson(SAMPLE))
         app(state)
         onNodeWithText("3 oydan ko‘p  1").performClick() // faqat Etil spirti
-        onNodeWithText("750").performClick()
+        onNodeWithTag("cell-1-F").performClick()
         onNodeWithText("1 – 3 oy  1").performClick() // faqat Shavel kislota
         waitForIdle()
         type("999", Key.Enter)
@@ -274,7 +274,7 @@ class AppUiTest {
         waitForIdle()
         type("30.09.2026", Key.Enter)
         waitForIdle()
-        assertEquals("01.09.2026", state.byName("Etil spirti").receivedAt)
+        assertEquals("01.09.2026", state.byName("Etil spirti").producedAt)
         assertTrue(state.rows.none { it.name == "Amiak" })
     }
 
@@ -282,7 +282,7 @@ class AppUiTest {
     fun f2WhileTypingLetsTheArrowsMoveInsideTheText() = runComposeUiTest {
         val state = SheetState(SheetStore.fromJson(SAMPLE))
         app(state)
-        onNodeWithText("180,5").performClick()
+        onNodeWithTag("cell-3-F").performClick()
         type("35")
         onNodeWithTag("cell-editor").key(Key.F2)
         onNodeWithTag("cell-editor").key(Key.DirectionLeft)
@@ -302,7 +302,7 @@ class AppUiTest {
         waitForIdle()
         type("01.10.2026", Key.Enter)
         waitForIdle()
-        assertEquals("01.10.2026", state.byName("Natriy").receivedAt)
+        assertEquals("01.10.2026", state.byName("Natriy").producedAt)
         assertEquals(6, state.rows.size)
     }
 
@@ -316,7 +316,7 @@ class AppUiTest {
         waitForIdle()
         type("Ammiak", Key.Enter)
         waitForIdle()
-        assertEquals("", state.byName("Ammiak").receivedAt)
+        assertEquals("", state.byName("Ammiak").producedAt)
         assertEquals(6, state.rows.size)
     }
 
@@ -346,7 +346,7 @@ class AppUiTest {
         onNodeWithTag("cell-editor").performKeyInput { keyDown(Key.CtrlLeft); pressKey(Key.V); keyUp(Key.CtrlLeft) }
         waitForIdle()
         onNodeWithText("1 oydan kam  1").performClick() // faqat Fenol
-        onNodeWithText("30").performClick()
+        onNodeWithTag("cell-3-F").performClick() // Fenol — ombordagi miqdor
         type("70", Key.Enter) // ko‘rinish “muzlaydi”
         repeat(2) {
             onNodeWithTag("cell-editor").performKeyInput { keyDown(Key.CtrlLeft); pressKey(Key.Z); keyUp(Key.CtrlLeft) }
@@ -358,15 +358,46 @@ class AppUiTest {
         }
     }
 
+    @Test
+    fun givingToADepartmentFillsTheRemainder() = runComposeUiTest {
+        val state = SheetState(SheetStore.fromJson(SAMPLE))
+        app(state)
+        onNodeWithTag("cell-1-G").performClick() // Etil spirti → Bo‘lim
+        type("b", Key.Tab) // birinchi harf yetadi
+        type("50", Key.Enter)
+        waitForIdle()
+        val etil = state.byName("Etil spirti")
+        assertEquals("Biologiya", etil.department)
+        assertEquals("50", etil.issuedAmount)
+        assertTrue(etil.check().complete)
+        onNodeWithText("700").assertExists() // Qoldiq = 750 − 50
+        screenshot("05-qoldiq")
+    }
+
+    @Test
+    fun theComputedColumnsCannotBeTypedInto() = runComposeUiTest {
+        val state = SheetState(SheetStore.fromJson(SAMPLE))
+        app(state)
+        val before = state.rows
+        onNodeWithTag("cell-1-A").performClick()
+        onNodeWithTag("cell-editor").key(Key.MoveEnd) // J1 — Qolgan muddat
+        onNodeWithText("J1").assertExists()
+        onNodeWithTag("cell-editor").key(Key.Delete)
+        onNodeWithTag("cell-editor").key(Key.DirectionLeft) // I1 — Qoldiq
+        onNodeWithText("I1").assertExists()
+        onNodeWithTag("cell-editor").key(Key.Delete)
+        waitForIdle()
+        assertEquals(before, state.rows)
+    }
+
     companion object {
         val SAMPLE = """
-            {"format":"reaktiv-ombor","version":1,"reagents":[
-              {"name":"Etil spirti","receivedAt":"2026-09-01","givenAmount":"1000","unit":"ml","expiresAt":"2027-09-01","stockAmount":"750","createdAt":1},
-              {"name":"Xloroform","receivedAt":"2026-08-10","givenAmount":"500","unit":"ml","expiresAt":"2026-11-05","stockAmount":"320","createdAt":2},
-              {"name":"Shavel kislota","receivedAt":"2026-07-15","givenAmount":"250","unit":"gr","expiresAt":"2026-12-20","stockAmount":"180.5","createdAt":3},
-              {"name":"Naftol-2","receivedAt":"2026-06-01","givenAmount":"100","unit":"gr","expiresAt":"2026-10-10","stockAmount":"40","createdAt":4}
-            ],"drafts":[
-              {"name":"Jelatin","receivedAt":"20.09.2026","givenAmount":"","unit":"gr","expiresAt":"","stockAmount":"","createdAt":5}
+            {"format":"reaktiv-ombor","version":2,"rows":[
+              {"name":"Etil spirti","producedAt":"2026-09-01","receivedAmount":"1000","unit":"ml","expiresAt":"2027-09-01","stockAmount":"750","createdAt":1},
+              {"name":"Xloroform","producedAt":"2026-08-10","receivedAmount":"500","unit":"ml","expiresAt":"2026-11-05","stockAmount":"320","createdAt":2},
+              {"name":"Shavel kislota","producedAt":"2026-07-15","receivedAmount":"250","unit":"g","expiresAt":"2026-12-20","stockAmount":"180.5","createdAt":3},
+              {"name":"Naftol-2","producedAt":"2026-06-01","receivedAmount":"100","unit":"g","expiresAt":"2026-10-10","stockAmount":"40","createdAt":4},
+              {"name":"Jelatin","producedAt":"20.09.2026","receivedAmount":"","unit":"g","expiresAt":"","stockAmount":"","createdAt":5}
             ]}
         """.trimIndent()
     }

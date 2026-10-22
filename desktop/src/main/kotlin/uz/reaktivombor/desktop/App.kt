@@ -289,8 +289,10 @@ private fun AppContent(
         if (selCol == Col.UNIT && value.isNotEmpty()) {
             // "m" → "ml", "k" → "kg" — bitta mos birlik bo‘lsa to‘ldiramiz.
             val normalized = normalizeUnit(value)
-            value = Amounts.UNITS.singleOrNull { it == normalized } ?: Amounts.UNITS.filter { it.startsWith(normalized) }.singleOrNull() ?: normalized
+            value = UNITS.singleOrNull { it == normalized } ?: UNITS.filter { it.startsWith(normalized) }.singleOrNull() ?: normalized
         }
+        // "g" → "Gistologiya", "b" → "Biologiya", "m" → "Morfologiya".
+        if (selCol == Col.DEPARTMENT) value = normalizeDepartment(value)
         if (value == rawOf(selId, selCol)) return
         setCell(value)
     }
@@ -424,7 +426,7 @@ private fun AppContent(
             }
         } else if (selCol.editable) {
             val value = block.trim()
-            val isDate = selCol == Col.RECEIVED || selCol == Col.EXPIRES
+            val isDate = selCol.isDate
             val converted = if (isDate && DateText.isMonthFirst(listOf(value))) DateText.fromMonthFirst(value) else value
             setCell(converted)
             if (converted != value && DateText.isAmbiguous(value)) {
@@ -468,7 +470,7 @@ private fun AppContent(
                 Key.F -> { runCatching { searchFocus.requestFocus() }; true }
                 Key.Minus -> { deleteRow(selId); true }
                 Key.Semicolon -> {
-                    if (selCol == Col.RECEIVED || selCol == Col.EXPIRES) setCell(DateText.format(todayProvider()))
+                    if (selCol.isDate) setCell(DateText.format(todayProvider()))
                     true
                 }
                 Key.DirectionUp, Key.MoveHome -> {
@@ -491,7 +493,7 @@ private fun AppContent(
             Key.Delete -> { if (selCol.editable && selId != null) setCell(""); true }
             Key.Backspace -> { startEditing("", typed = true); true }
             Key.MoveHome -> { select(selId, Col.NAME); true }
-            Key.MoveEnd -> { select(selId, Col.STATUS); true }
+            Key.MoveEnd -> { select(selId, Col.entries.last()); true }
             Key.PageUp -> { move(-15, 0); true }
             Key.PageDown -> { move(15, 0); true }
             Key.Escape -> true
@@ -531,22 +533,18 @@ private fun AppContent(
 
     fun exportBackup() {
         commitEdit()
-        val path = dialogs.saveFile("Telefon uchun zaxira nusxa", "reaktivlar-zaxira-${todayProvider()}.json") ?: return
+        val path = dialogs.saveFile("Zaxira nusxa", "reaktivlar-zaxira-${todayProvider()}.json") ?: return
         val rows = state.rows
-        val items = rows.mapNotNull { it.toBackupItem() }
-        val skipped = rows.count { !it.isBlank } - items.size
+        val count = rows.count { !it.isBlank }
         scope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
-                    // Tugallanmagan qatorlar ham ("drafts"): telefon ularni o‘qimaydi, kompyuterda ochilsa tiklanadi.
+                    // Butun jadval, tugallanmagan qatorlar bilan — «Zaxira faylini ochish…» bilan to‘liq tiklanadi.
                     Files.writeString(path, SheetStore.toJson(rows, LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)), StandardCharsets.UTF_8)
                 }
             }
             notice = result.fold(
-                onSuccess = {
-                    val extra = if (skipped > 0) " Tugallanmagan $skipped ta qator ham saqlandi (telefonga o‘tmaydi, kompyuterda ochilsa tiklanadi)." else ""
-                    Notice("Zaxira saqlandi: ${items.size} ta reaktiv.$extra Telefonda: ⋮ → «Zaxiradan tiklash».")
-                },
+                onSuccess = { Notice("Zaxira saqlandi: $count ta qator. Boshqa kompyuterda: «Fayl» → «Zaxira faylini ochish…».") },
                 onFailure = { Notice("Faylni saqlab bo‘lmadi: ${it.message}", isError = true) },
             )
         }
@@ -616,15 +614,15 @@ private fun AppContent(
         FormulaBar(
             ref = "${selCol.letter}${if (selId == null) "+" else (selIndex + 1).toString()}",
             content = if (editing) editValue.text else lines.getOrNull(selIndex)?.row?.let { row ->
-                when (selCol) {
-                    Col.STATUS -> lines[selIndex].check?.let { c -> c.status(today)?.label } ?: ""
-                    else -> row[selCol]
-                }
+                if (selCol.editable) row[selCol] else cellText(row, selCol, lines[selIndex].check, today)
             } ?: "",
             hint = when (selCol) {
-                Col.RECEIVED, Col.EXPIRES -> "Sana: kk.oo.yyyy (masalan 17.10.2026). Ctrl+; — bugungi sana"
-                Col.UNIT -> "Birlik: gr, ml, kg, l yoki dona"
-                Col.GIVEN, Col.STOCK -> "Son: 500 yoki 2,5"
+                Col.PRODUCED, Col.EXPIRES -> "Sana: kk.oo.yyyy (masalan 17.10.2026). Ctrl+; — bugungi sana"
+                Col.UNIT -> "Birlik: l, ml, kg, g yoki dona"
+                Col.DEPARTMENT -> "Bo‘lim: Gistologiya, Biologiya yoki Morfologiya (birinchi harfi yetadi)"
+                Col.RECEIVED_AMOUNT, Col.STOCK, Col.ISSUED -> "Son: 500 yoki 2,5"
+                Col.REMAINDER -> "Qoldiq = Ombordagi miqdor − Berilgan miqdor (dastur o‘zi hisoblaydi)"
+                Col.DAYS_LEFT -> "Bugundan yaroqlilik muddatigacha qolgan kunlar (dastur o‘zi hisoblaydi)"
                 else -> null
             },
             error = lines.getOrNull(selIndex)?.let { line -> if (line.row != null && !line.row.isBlank) line.check?.error(selCol) else null },
@@ -701,6 +699,7 @@ private fun AppContent(
                         if (incomplete > 0) append(" (shundan $incomplete tasi tugallanmagan)")
                         append(". ")
                         if (parsed.skipped > 0) append("${parsed.skipped} ta buzuq qator tashlab ketildi. ")
+                        if (parsed.migrated) append("Bu eski jadval: «Ishlab chiqarilgan vaqti» ustunini keyin to‘ldirish kerak bo‘ladi. ")
                         append("Jadvalda hozir $current ta qator bor.\n\nAlmashtirilsa, hozirgi jadval fayldagisi bilan almashadi (Ctrl+Z bilan tiklash mumkin).")
                     },
                 )
@@ -766,11 +765,14 @@ fun visibleRows(
 private fun rowComparator(col: Col, ascending: Boolean): Comparator<SheetRow> {
     val base: Comparator<SheetRow> = when (col) {
         Col.NAME -> compareBy { searchKey(it.name.trim()) }
-        Col.RECEIVED -> compareBy(nullsLast()) { DateText.parse(it.receivedAt) }
-        Col.EXPIRES, Col.STATUS -> compareBy(nullsLast()) { DateText.parse(it.expiresAt) }
-        Col.GIVEN -> compareBy(nullsLast()) { Amounts.parse(it.givenAmount) }
+        Col.PRODUCED -> compareBy(nullsLast()) { DateText.parse(it.producedAt) }
+        Col.EXPIRES, Col.DAYS_LEFT -> compareBy(nullsLast()) { DateText.parse(it.expiresAt) }
+        Col.RECEIVED_AMOUNT -> compareBy(nullsLast()) { Amounts.parse(it.receivedAmount) }
         Col.STOCK -> compareBy(nullsLast()) { Amounts.parse(it.stockAmount) }
+        Col.ISSUED -> compareBy(nullsLast()) { Amounts.parse(it.issuedAmount) }
+        Col.REMAINDER -> compareBy(nullsLast()) { it.check().remainder }
         Col.UNIT -> compareBy { it.unit }
+        Col.DEPARTMENT -> compareBy(nullsLast()) { it.department.ifBlank { null } }
     }
     return if (ascending) base else base.reversed()
 }
@@ -827,8 +829,8 @@ private fun Toolbar(
                     Icon(Icons.Filled.ArrowDropDown, contentDescription = null)
                 }
                 DropdownMenu(expanded = fileMenu, onDismissRequest = { onFileMenu(false) }) {
-                    DropdownMenuItem(text = { Text("Telefon zaxirasini ochish…") }, onClick = onImport)
-                    DropdownMenuItem(text = { Text("Telefon uchun zaxira saqlash…") }, onClick = onExportBackup)
+                    DropdownMenuItem(text = { Text("Zaxira faylini ochish…") }, onClick = onImport)
+                    DropdownMenuItem(text = { Text("Zaxira nusxa saqlash…") }, onClick = onExportBackup)
                     DropdownMenuItem(text = { Text("Excel uchun saqlash (CSV)…") }, onClick = onExportCsv)
                     HorizontalDivider()
                     DropdownMenuItem(text = { Text("Ma’lumotlar papkasini ochish") }, onClick = onOpenFolder)

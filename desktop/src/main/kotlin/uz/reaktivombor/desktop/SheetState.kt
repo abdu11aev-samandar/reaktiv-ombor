@@ -97,7 +97,7 @@ class SheetState(initial: List<SheetRow>, private val clock: () -> Long = System
         if (lines.size == 1 && lines[0].all { it.isBlank() }) return 0
         val cols = Col.entries
         fun colAt(cellIndex: Int): Col? = cols.getOrNull(startCol.ordinal + cellIndex)
-        fun isDate(col: Col?) = col == Col.RECEIVED || col == Col.EXPIRES
+        fun isDate(col: Col?) = col?.isDate == true
         val monthFirst = DateText.isMonthFirst(clipboardDates(lines, startCol), pcMonthFirst)
 
         val updated = rows.toMutableList()
@@ -138,9 +138,9 @@ class SheetState(initial: List<SheetRow>, private val clock: () -> Long = System
 fun readClipboard(text: String): List<List<String>> =
     parseClipboard(text.replace("\r\n", "\n").replace('\r', '\n').trimEnd('\n'))
 
-/** Nusxaning [startCol] dan boshlab qo‘yilganda sana ustunlariga (B, E) tushadigan qiymatlari. */
+/** Nusxaning [startCol] dan boshlab qo‘yilganda sana ustunlariga tushadigan qiymatlari. */
 fun clipboardDates(lines: List<List<String>>, startCol: Col): List<String> = lines.flatMap { cells ->
-    cells.filterIndexed { i, _ -> Col.entries.getOrNull(startCol.ordinal + i).let { it == Col.RECEIVED || it == Col.EXPIRES } }
+    cells.filterIndexed { i, _ -> Col.entries.getOrNull(startCol.ordinal + i)?.isDate == true }
 }
 
 /**

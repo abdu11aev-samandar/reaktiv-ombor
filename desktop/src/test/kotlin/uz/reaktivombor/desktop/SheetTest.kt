@@ -6,7 +6,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import uz.reaktivombor.domain.ExpiryStatus
-import uz.reaktivombor.domain.Field
+import java.math.BigDecimal
 import java.time.LocalDate
 
 class SheetTest {
@@ -24,38 +24,88 @@ class SheetTest {
         assertEquals("07.01.2027", DateText.format(LocalDate.parse("2027-01-07")))
     }
 
+    private val xloroform = SheetRow(
+        1, "Xloroform", producedAt = "10.08.2026", receivedAmount = "500", unit = "ml",
+        expiresAt = "05.11.2026", stockAmount = "320", createdAt = 1,
+    )
+
     @Test
-    fun completeRowGetsColour() {
-        val row = SheetRow(1, "Xloroform", "10.08.2026", "500", "ml", "05.11.2026", "320", 1)
-        val check = row.check()
-        assertTrue(check.complete)
+    fun completeRowGetsColourAndComputedColumns() {
+        val check = xloroform.copy(department = "Biologiya", issuedAmount = "20").check()
+        assertTrue(check.errors.toString(), check.complete)
         assertEquals(ExpiryStatus.RED, check.status(today))
+        assertEquals(BigDecimal("300.000"), check.remainder)
+        assertEquals(15L, check.daysLeft(today))
+        assertEquals("300", cellText(xloroform.copy(department = "Biologiya", issuedAmount = "20"), Col.REMAINDER, check, today))
+        assertEquals("15", cellText(xloroform, Col.DAYS_LEFT, check, today))
+    }
+
+    @Test
+    fun issuingIsOptionalButDepartmentAndAmountGoTogether() {
+        val plain = xloroform.check()
+        assertTrue(plain.complete)
+        assertEquals(BigDecimal("320.000"), plain.remainder) // hech narsa berilmagan — qoldiq = ombordagi
+        assertEquals("Bo‘limga berilgan miqdorni kiriting.", xloroform.copy(department = "Gistologiya").check().errors[Col.ISSUED])
+        assertEquals("Qaysi bo‘limga berilganini tanlang.", xloroform.copy(issuedAmount = "5").check().errors[Col.DEPARTMENT])
+        val tooMuch = xloroform.copy(department = "Morfologiya", issuedAmount = "321").check()
+        assertEquals("Berilgan miqdor ombordagi miqdordan ko‘p bo‘lishi mumkin emas.", tooMuch.errors[Col.ISSUED])
+        assertNull(tooMuch.remainder)
+        assertEquals("Bo‘lim: Gistologiya, Biologiya yoki Morfologiya.", xloroform.copy(department = "Kimyo", issuedAmount = "1").check().errors[Col.DEPARTMENT])
     }
 
     @Test
     fun draftRowListsMissingAndWrongFields() {
-        val check = SheetRow(1, name = "Ammiak", receivedAt = "bugun", givenAmount = "ko‘p", createdAt = 1).check()
-        assertEquals(null, check.values)
-        assertEquals("Kelgan vaqt to‘g‘ri sana bo‘lishi kerak (masalan: 17.10.2026).", check.errors[Field.RECEIVED_AT])
-        assertEquals("Berilgan miqdor son bo‘lishi kerak.", check.errors[Field.GIVEN_AMOUNT])
-        assertEquals("Yaroqlilik muddati kiritilishi shart.", check.errors[Field.EXPIRES_AT])
-        assertEquals("Ombordagi miqdor kiritilishi shart.", check.errors[Field.STOCK_AMOUNT])
-        assertNull(check.errors[Field.NAME])
+        val check = SheetRow(1, name = "Ammiak", producedAt = "bugun", receivedAmount = "ko‘p", createdAt = 1).check()
+        assertFalse(check.complete)
+        assertEquals("Ishlab chiqarilgan vaqti to‘g‘ri sana bo‘lishi kerak (masalan: 17.10.2026).", check.errors[Col.PRODUCED])
+        assertEquals("Kelgan miqdor son bo‘lishi kerak.", check.errors[Col.RECEIVED_AMOUNT])
+        assertEquals("Yaroqlilik muddati kiritilishi shart.", check.errors[Col.EXPIRES])
+        assertEquals("Ombordagi miqdor kiritilishi shart.", check.errors[Col.STOCK])
+        assertNull(check.errors[Col.NAME])
+        assertNull(check.errors[Col.DEPARTMENT])
+        assertNull(check.errors[Col.ISSUED])
     }
 
     @Test
-    fun expiryBeforeArrivalIsAnError() {
-        val check = SheetRow(1, "Jelatin", "10.10.2026", "1", "gr", "01.10.2026", "1", 1).check()
-        assertEquals("Yaroqlilik muddati kelgan vaqtdan oldin bo‘lishi mumkin emas.", check.errors[Field.EXPIRES_AT])
+    fun expiryBeforeProductionIsAnError() {
+        val check = SheetRow(1, "Jelatin", "10.10.2026", "1", "g", "01.10.2026", "1", createdAt = 1).check()
+        assertEquals("Yaroqlilik muddati ishlab chiqarilgan vaqtdan oldin bo‘lishi mumkin emas.", check.errors[Col.EXPIRES])
     }
 
     @Test
-    fun unitsAreNormalised() {
+    fun colourComesFromTheExpiryDateEvenForAnUnfinishedRow() {
+        val check = SheetRow(1, "Fenol", expiresAt = "01.11.2026", createdAt = 1).check()
+        assertFalse(check.complete)
+        assertEquals(ExpiryStatus.RED, check.status(today))
+        assertEquals(11L, check.daysLeft(today))
+    }
+
+    @Test
+    fun theOldArrivalDateIsShownWhereTheProductionDateIsMissing() {
+        val check = xloroform.copy(producedAt = "", legacyReceivedAt = "2026-08-10").check()
+        assertEquals("Ishlab chiqarilgan vaqtini kiriting (eski jadvaldagi «Kelgan vaqt»: 10.08.2026).", check.errors[Col.PRODUCED])
+    }
+
+    @Test
+    fun unitsAndDepartmentsAreNormalised() {
         assertEquals("ml", normalizeUnit(" ML "))
-        assertEquals("gr", normalizeUnit("г"))
+        assertEquals("g", normalizeUnit("gr"))
+        assertEquals("g", normalizeUnit("г"))
         assertEquals("dona", normalizeUnit("ta"))
         assertEquals("tonna", normalizeUnit("tonna"))
         assertEquals("ml", SheetRow(1, createdAt = 1).with(Col.UNIT, "Мл").unit)
+        assertEquals("Biologiya", normalizeDepartment("b"))
+        assertEquals("Gistologiya", normalizeDepartment(" GIST "))
+        assertEquals("Morfologiya", normalizeDepartment("Морфология"))
+        assertEquals("Kimyo", normalizeDepartment("Kimyo"))
+        assertEquals("Gistologiya", SheetRow(1, createdAt = 1).with(Col.DEPARTMENT, "g").department)
+    }
+
+    @Test
+    fun daysLeftText() {
+        assertEquals("39", daysLeftText(39))
+        assertEquals("0 (bugun)", daysLeftText(0))
+        assertEquals("-12 (o‘tgan)", daysLeftText(-12))
     }
 
     @Test

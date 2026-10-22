@@ -1,13 +1,16 @@
 package uz.reaktivombor.desktop
 
 import org.junit.Assert.assertEquals
+import org.json.JSONObject
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import uz.reaktivombor.domain.Backup
-import java.math.BigDecimal
+import uz.reaktivombor.domain.BackupException
+import uz.reaktivombor.domain.ExpiryStatus
 import java.nio.file.Files
 import java.time.LocalDate
 
@@ -16,9 +19,9 @@ class SheetStoreTest {
     val tmp = TemporaryFolder()
 
     private val rows = listOf(
-        SheetRow(1, "Etil spirti", "01.09.2026", "1000", "ml", "01.09.2027", "750", 10),
-        SheetRow(2, "Ammiak", "30.09.2026", "", "ml", "", "", 20), // tugallanmagan
-        SheetRow(3, "Shavel kislota", "15.07.2026", "250", "gr", "20.12.2026", "180,5", 30),
+        SheetRow(1, "Etil spirti", "01.09.2026", "1000", "ml", "01.09.2027", "750", "Biologiya", "50", createdAt = 10),
+        SheetRow(2, "Ammiak", "30.09.2026", "", "ml", "", "", createdAt = 20), // tugallanmagan
+        SheetRow(3, "Shavel kislota", "15.07.2026", "250", "g", "20.12.2026", "180,5", createdAt = 30),
         SheetRow(4, createdAt = 40), // bo‘sh — saqlanmaydi
     )
 
@@ -31,22 +34,27 @@ class SheetStoreTest {
         assertEquals(listOf("Etil spirti", "Ammiak", "Shavel kislota"), loaded.rows.map { it.name })
         assertEquals("180,5", loaded.rows[2].stockAmount)
         assertEquals("20.12.2026", loaded.rows[2].expiresAt)
-        assertEquals("", loaded.rows[1].givenAmount)
+        assertEquals("", loaded.rows[1].receivedAmount)
+        assertEquals("Biologiya", loaded.rows[0].department)
+        assertEquals("50", loaded.rows[0].issuedAmount)
+        assertEquals(rows.take(3).map { it.copy(id = 0) }, loaded.rows.map { it.copy(id = 0) })
     }
 
     @Test
-    fun dataFileIsAPhoneBackup() {
-        val json = SheetStore.toJson(rows, "2026-10-21T09:00:00")
-        val parsed = Backup.fromJson(json)
-        // Telefon faqat tugallangan qatorlarni oladi; drafts bo‘limini e’tiborsiz qoldiradi.
-        assertEquals(listOf("Etil spirti", "Shavel kislota"), parsed.items.map { it.name })
-        assertEquals(0, parsed.skipped)
-        assertEquals(BigDecimal("180.500"), parsed.items[1].stockAmount)
-        assertEquals(LocalDate.parse("2026-12-20"), parsed.items[1].expiresAt)
+    fun dataFileIsVersion2WithMachineReadableValues() {
+        val root = JSONObject(SheetStore.toJson(rows, "2026-10-21T09:00:00"))
+        assertEquals(2, root.getInt("version"))
+        val first = root.getJSONArray("rows").getJSONObject(0)
+        assertEquals("2026-09-01", first.getString("producedAt"))
+        assertEquals("750", first.getString("stockAmount"))
+        assertEquals("50", first.getString("issuedAmount"))
+        assertEquals(3, root.getJSONArray("rows").length())
+        // Eski telefon ilovasi yangi faylni “yangiroq versiya” deb rad etadi — ma’lumotni buzib o‘qimaydi.
+        assertThrows(BackupException::class.java) { Backup.fromJson(root.toString()) }
     }
 
     @Test
-    fun readsAPhoneBackup() {
+    fun aPhoneBackupIsMovedIntoTheNewTable() {
         val phone = """
             {"format":"reaktiv-ombor","version":1,"reagents":[
               {"name":"Xloroform","receivedAt":"2026-08-10","givenAmount":"500","unit":"ml","expiresAt":"2026-11-05","stockAmount":"320.5","createdAt":5},
@@ -54,11 +62,43 @@ class SheetStoreTest {
             ]}
         """.trimIndent()
         val parsed = SheetStore.parse(phone)
+        assertTrue(parsed.migrated)
         assertEquals(1, parsed.skipped)
         val row = parsed.rows.single()
+        // Eski «Berilgan miqdor» (omborga kelgani) → «Kelgan miqdor»; «Kelgan vaqt» saqlanadi, lekin ustuni yo‘q.
+        assertEquals("500", row.receivedAmount)
         assertEquals("05.11.2026", row.expiresAt)
         assertEquals("320,5", row.stockAmount)
-        assertTrue(row.check().complete)
+        assertEquals("", row.producedAt)
+        assertEquals("10.08.2026", row.legacyReceivedAt)
+        assertEquals(ExpiryStatus.RED, row.check().status(LocalDate.parse("2026-10-21")))
+        assertEquals(setOf(Col.PRODUCED), row.check().errors.keys)
+    }
+
+    @Test
+    fun anOldDataFileIsMigratedOnceAndItsOriginalKept() {
+        val file = tmp.root.toPath().resolve("reaktivlar.json")
+        val old = """
+            {"format":"reaktiv-ombor","version":1,"reagents":[
+              {"name":"Etil spirti","receivedAt":"2026-09-01","givenAmount":"1000","unit":"ml","expiresAt":"2027-09-01","stockAmount":"750","createdAt":1}
+            ],"drafts":[
+              {"name":"Jelatin","receivedAt":"20.09.2026","givenAmount":"","unit":"gr","expiresAt":"","stockAmount":"","createdAt":2}
+            ]}
+        """.trimIndent()
+        Files.writeString(file, old)
+        val store = SheetStore(file)
+        val loaded = store.load()
+        assertNotNull(loaded.warning)
+        assertEquals(listOf("Etil spirti", "Jelatin"), loaded.rows.map { it.name })
+        assertEquals("g", loaded.rows[1].unit)
+        assertEquals("20.09.2026", loaded.rows[1].legacyReceivedAt)
+        assertEquals(old, Files.readString(file.resolveSibling("reaktivlar-eski-jadval.json")))
+
+        store.save(loaded.rows)
+        val saved = JSONObject(Files.readString(file))
+        assertEquals(2, saved.getInt("version"))
+        assertEquals("2026-09-01", saved.getJSONArray("rows").getJSONObject(0).getString("receivedAt")) // eski sana yo‘qolmadi
+        assertEquals(null, store.load().warning) // endi yangi format
     }
 
     @Test
@@ -77,12 +117,15 @@ class SheetStoreTest {
     @Test
     fun csvOpensInExcel() {
         val csv = SheetStore.toCsv(rows.take(3), LocalDate.parse("2026-10-21"))
-        val lines = csv.removePrefix("﻿").trimEnd().split("\r\n")
-        assertTrue(csv.startsWith("﻿"))
-        assertEquals("№;Reaktiv nomi;Kelgan vaqt;Berilgan miqdor;Birlik;Yaroqlilik muddati;Ombordagi miqdor;Holat;Qoldi", lines[0])
-        assertEquals("1;Etil spirti;01.09.2026;1000;ml;01.09.2027;750;3 oydan ko‘p;315 kun qoldi", lines[1])
-        assertEquals("2;Ammiak;30.09.2026;;ml;;;Tugallanmagan;", lines[2])
-        assertEquals("3;Shavel kislota;15.07.2026;250;gr;20.12.2026;180,5;1 – 3 oy;60 kun qoldi", lines[3])
+        val lines = csv.removePrefix("\uFEFF").trimEnd().split("\r\n")
+        assertTrue(csv.startsWith("\uFEFF"))
+        assertEquals(
+            "№;Reaktiv nomi;Ishlab chiqarilgan vaqti;Kelgan miqdor;O‘lchov birligi;Yaroqlilik muddati;Ombordagi miqdor;Bo‘lim;Berilgan miqdor;Qoldiq;Qolgan muddat (kun);Holat",
+            lines[0],
+        )
+        assertEquals("1;Etil spirti;01.09.2026;1000;ml;01.09.2027;750;Biologiya;50;700;315;3 oydan ko‘p", lines[1])
+        assertEquals("2;Ammiak;30.09.2026;;ml;;;;;;;Tugallanmagan", lines[2])
+        assertEquals("3;Shavel kislota;15.07.2026;250;g;20.12.2026;180,5;;;180,5;60;1 – 3 oy", lines[3])
     }
 
     @Test
@@ -98,7 +141,7 @@ class SheetStoreTest {
     @Test
     fun simultaneousSavesNeverBreakTheFile() {
         val store = SheetStore(tmp.root.toPath().resolve("reaktivlar.json"))
-        val many = (1..100).map { SheetRow(it.toLong(), "Reaktiv $it", "01.01.2026", "1", "gr", "01.01.2028", "$it", it.toLong()) }
+        val many = (1..100).map { SheetRow(it.toLong(), "Reaktiv $it", "01.01.2026", "1", "g", "01.01.2028", "$it", createdAt = it.toLong()) }
         val errors = java.util.concurrent.ConcurrentLinkedQueue<Throwable>()
         val threads = (1..4).map { Thread { repeat(40) { runCatching { store.save(many) }.onFailure(errors::add) } } }
         threads.forEach(Thread::start)
