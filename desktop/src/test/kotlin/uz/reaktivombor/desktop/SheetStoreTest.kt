@@ -41,6 +41,58 @@ class SheetStoreTest {
     }
 
     @Test
+    fun theDepartmentListIsSavedWithTheTable() {
+        val store = SheetStore(tmp.root.toPath().resolve("data/reaktivlar.json"))
+        // «Kimyo» hali hech qayerda yozilmagan — baribir saqlanadi. «Biologiya» qatorda yozilgan — ro‘yxatdan tushib qolmaydi.
+        store.save(rows, departments = listOf("Gistologiya", "Kimyo"))
+        val loaded = store.load()
+        assertEquals(listOf("Gistologiya", "Kimyo", "Biologiya"), loaded.departments)
+        val root = JSONObject(Files.readString(store.file))
+        assertEquals(listOf("Gistologiya", "Kimyo", "Biologiya"), root.getJSONArray("departments").map { it as String })
+    }
+
+    @Test
+    fun aFileWithoutADepartmentListGetsTheDefaultsAndItsOwnNames() {
+        val text = """
+            {"format":"reaktiv-ombor","version":2,"rows":[
+              {"name":"A","department":"kimyo","createdAt":1},
+              {"name":"B","department":"biologiya","createdAt":2}
+            ]}
+        """.trimIndent()
+        val parsed = SheetStore.parse(text)
+        assertEquals(null, parsed.departments)
+        assertEquals(listOf("Kimyo", "Biologiya"), parsed.rows.map { it.department })
+        assertEquals(DEFAULT_DEPARTMENTS + "Kimyo", parsed.allDepartments)
+        val file = tmp.root.toPath().resolve("reaktivlar.json")
+        Files.writeString(file, text)
+        assertEquals(DEFAULT_DEPARTMENTS + "Kimyo", SheetStore(file).load().departments)
+    }
+
+    @Test
+    fun aBrokenDepartmentListIsCleanedUp() {
+        val text = """
+            {"format":"reaktiv-ombor","version":2,"departments":["Kimyo"," kimyo ",42,"","123",null,"Fizika"],"rows":[
+              {"name":"A","department":"Kimyo","createdAt":1}
+            ]}
+        """.trimIndent()
+        assertEquals(listOf("Kimyo", "Fizika"), SheetStore.parse(text).departments)
+        val notAList = """{"format":"reaktiv-ombor","version":2,"departments":"Kimyo","rows":[]}"""
+        assertEquals(null, SheetStore.parse(notAList).departments)
+        // Eski telefon zaxirasida ro‘yxat yo‘q — boshlang‘ich bo‘limlar.
+        assertEquals(null, SheetStore.parse("""{"format":"reaktiv-ombor","version":1,"reagents":[]}""").departments)
+    }
+
+    @Test
+    fun aBrokenFileFallsBackToTheDepartmentsOfThePreviousSave() {
+        val file = tmp.root.toPath().resolve("reaktivlar-jadval.json")
+        val store = SheetStore(file)
+        store.save(rows, departments = listOf("Kimyo"))
+        store.save(rows, departments = listOf("Kimyo", "Fizika")) // oldingi holat .bak.json ga o‘tadi
+        Files.writeString(file, "{buzuq")
+        assertEquals(listOf("Kimyo", "Biologiya"), store.load().departments)
+    }
+
+    @Test
     fun dataFileIsVersion2WithMachineReadableValues() {
         val root = JSONObject(SheetStore.toJson(rows, "2026-10-21T09:00:00"))
         assertEquals(2, root.getInt("version"))

@@ -14,10 +14,13 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -107,9 +110,6 @@ interface FileDialogs {
     fun openFolder(dir: Path)
 }
 
-/** Qidiruv: katta-kichik harf va o‘ / o' / o’ farqlanmaydi. */
-fun searchKey(value: String): String = value.replace(Regex("['`’ʻʼ]"), "‘").lowercase()
-
 private data class Notice(val text: String, val isError: Boolean = false)
 
 private const val MAX_IMPORT_BYTES = 20L * 1024 * 1024
@@ -191,6 +191,7 @@ private fun AppContent(
     var savedRevision by remember { mutableIntStateOf(0) }
     var fileMenu by remember { mutableStateOf(false) }
     var rowMenuFor by remember { mutableStateOf<Long?>(null) }
+    var departmentsOpen by remember { mutableStateOf(false) }
 
     val cellFocus = remember { FocusRequester() }
     val searchFocus = remember { FocusRequester() }
@@ -243,7 +244,8 @@ private fun AppContent(
         delay(400)
         val revision = state.revision
         val snapshot = state.rows
-        val result = withContext(Dispatchers.IO) { runCatching { store.save(snapshot, revision) } }
+        val departments = state.departments
+        val result = withContext(Dispatchers.IO) { runCatching { store.save(snapshot, revision, departments) } }
         if (result.isSuccess) {
             savedRevision = revision
             saveError = false
@@ -279,30 +281,41 @@ private fun AppContent(
         focusTick++
     }
 
+    /** Shu amal bo‘limlar ro‘yxatiga qo‘shgan yangi bo‘limlar haqida xabar. */
+    fun departmentsAdded(before: List<String>): String? =
+        state.departments.filterNot { it in before }.takeIf { it.isNotEmpty() }?.let { added ->
+            val names = added.joinToString(", ") { "«$it»" }
+            (if (added.size == 1) "$names — yangi bo‘lim, ro‘yxatga qo‘shildi." else "Yangi bo‘limlar ro‘yxatga qo‘shildi: $names.") +
+                " Ro‘yxat: «Bo‘limlar» tugmasi."
+        }
+
     fun setCell(value: String) {
         freezeView()
         val wasNew = selId == null
+        val departmentsBefore = state.departments
         val id = state.setCell(selId, selCol, value)
         if (wasNew && id != null) {
             selId = id
             pinned = pinned + id
         }
+        departmentsAdded(departmentsBefore)?.let { notice = Notice("$it Bekor qilish: Ctrl+Z.") }
     }
 
-    fun commitEdit() {
+    /** [complete] — yozilgan boshlanishni to‘ldirish ("m" → "ml", "b" → "Biologiya"); ro‘yxatdan tanlanganda kerak emas. */
+    fun commitEdit(complete: Boolean = true) {
         if (!editing) return
         editing = false
         typedOver = false
         var value = editValue.text.trim()
         // Eski matn keyingi katakdagi yozuv oldiga tushib qolmasin.
         editValue = TextFieldValue("")
-        if (selCol == Col.UNIT && value.isNotEmpty()) {
+        if (complete && selCol == Col.UNIT && value.isNotEmpty()) {
             // "m" → "ml", "k" → "kg" — bitta mos birlik bo‘lsa to‘ldiramiz.
             val normalized = normalizeUnit(value)
             value = UNITS.singleOrNull { it == normalized } ?: UNITS.filter { it.startsWith(normalized) }.singleOrNull() ?: normalized
         }
-        // "g" → "Gistologiya", "b" → "Biologiya", "m" → "Morfologiya".
-        if (selCol == Col.DEPARTMENT) value = normalizeDepartment(value)
+        // "g" → "Gistologiya", "b" → "Biologiya" — ochilgan ro‘yxatdagi birinchi mos bo‘lim. Mos kelmasa — yangi bo‘lim.
+        if (selCol == Col.DEPARTMENT) value = matchDepartment(value, state.departments, prefix = complete)
         if (value == rawOf(selId, selCol)) return
         setCell(value)
     }
@@ -424,15 +437,17 @@ private fun AppContent(
             val monthFirst = DateText.isMonthFirst(dates)
             // AQSh formatidagi kompyuterda blok kun/oy deb o‘qildi (unda 25/10/2026 kabi sana bor) — buni ham aytamiz.
             val dayFirstOnUsPc = DateText.pcMonthFirst && !monthFirst && dates.any(DateText::isAmbiguous)
+            val departmentsBefore = state.departments
             val count = state.paste(block, rows.map { it.id }, indexIn(rows), selCol)
+            val newDepartments = departmentsAdded(departmentsBefore)?.let { " $it" } ?: ""
             val created = state.rows.map { it.id }.filterNot { it in before }
             pinned = pinned + created
             if (selId == null) selId = created.firstOrNull()
             notice = when {
                 count == 0 -> Notice("Hech narsa o‘zgarmadi: nusxadagi qiymatlar jadvaldagi bilan bir xil yoki ularni bu ustunga qo‘yib bo‘lmaydi.", isError = true)
-                monthFirst -> Notice("$count qator qo‘yildi. Sanalar kompyuter sozlamasi bo‘yicha oy/kun/yil tartibida o‘qildi — tekshirib oling. Bekor qilish: Ctrl+Z.")
-                dayFirstOnUsPc -> Notice("$count qator qo‘yildi. Nusxada kun/oy/yil sana bor, shuning uchun sanalar kun/oy/yil tartibida o‘qildi — tekshirib oling. Bekor qilish: Ctrl+Z.")
-                else -> Notice("$count qator qo‘yildi. Bekor qilish: Ctrl+Z.")
+                monthFirst -> Notice("$count qator qo‘yildi. Sanalar kompyuter sozlamasi bo‘yicha oy/kun/yil tartibida o‘qildi — tekshirib oling.$newDepartments Bekor qilish: Ctrl+Z.")
+                dayFirstOnUsPc -> Notice("$count qator qo‘yildi. Nusxada kun/oy/yil sana bor, shuning uchun sanalar kun/oy/yil tartibida o‘qildi — tekshirib oling.$newDepartments Bekor qilish: Ctrl+Z.")
+                else -> Notice("$count qator qo‘yildi.$newDepartments Bekor qilish: Ctrl+Z.")
             }
         } else if (selCol.editable) {
             val value = block.trim()
@@ -545,12 +560,13 @@ private fun AppContent(
         commitEdit()
         val path = dialogs.saveFile("Zaxira nusxa", "reaktivlar-zaxira-${todayProvider()}.json") ?: return
         val rows = state.rows
+        val departments = state.departments
         val count = rows.count { !it.isBlank }
         scope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
                     // Butun jadval, tugallanmagan qatorlar bilan — «Zaxira faylini ochish…» bilan to‘liq tiklanadi.
-                    Files.writeString(path, SheetStore.toJson(rows, LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)), StandardCharsets.UTF_8)
+                    Files.writeString(path, SheetStore.toJson(rows, LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME), departments), StandardCharsets.UTF_8)
                 }
             }
             notice = result.fold(
@@ -606,6 +622,7 @@ private fun AppContent(
             onExportBackup = { fileMenu = false; exportBackup() },
             onExportCsv = { fileMenu = false; exportCsv() },
             onOpenFolder = { fileMenu = false; dialogs.openFolder(store.file.parent) },
+            onDepartments = { commitEdit(); departmentsOpen = true },
         )
 
         val red = counts[ExpiryStatus.RED] ?: 0
@@ -629,7 +646,7 @@ private fun AppContent(
             hint = when (selCol) {
                 Col.PRODUCED, Col.EXPIRES -> "Sana: kk.oo.yyyy (masalan 17.10.2026). Ctrl+; — bugungi sana"
                 Col.UNIT -> "Birlik: l, ml, kg, g yoki dona"
-                Col.DEPARTMENT -> "Bo‘lim: Gistologiya, Biologiya yoki Morfologiya (birinchi harfi yetadi)"
+                Col.DEPARTMENT -> "Bo‘lim: ro‘yxatdan tanlang yoki yangi nom yozing. Ro‘yxat — «Bo‘limlar» tugmasida"
                 Col.RECEIVED_AMOUNT, Col.STOCK, Col.ISSUED -> "Son: 500 yoki 2,5"
                 Col.REMAINDER -> "Qoldiq = Ombordagi miqdor − Berilgan miqdor (dastur o‘zi hisoblaydi)"
                 Col.DAYS_LEFT -> "Bugundan yaroqlilik muddatigacha qolgan kunlar (dastur o‘zi hisoblaydi)"
@@ -666,9 +683,10 @@ private fun AppContent(
                 refocus()
             },
             onRowMenu = { id -> rowMenuFor = id },
-            onPickUnit = { unit ->
-                editValue = TextFieldValue(unit, TextRange(unit.length))
-                commitEdit()
+            departments = state.departments,
+            onPick = { choice ->
+                editValue = TextFieldValue(choice, TextRange(choice.length))
+                commitEdit(complete = false)
                 refocus()
             },
             modifier = Modifier.weight(1f).fillMaxWidth(),
@@ -696,6 +714,10 @@ private fun AppContent(
         )
     }
 
+    if (departmentsOpen) {
+        DepartmentsDialog(state, onClose = { departmentsOpen = false; refocus() })
+    }
+
     importPending?.let { parsed ->
         val current = state.rows.count { !it.isBlank }
         val incomplete = parsed.rows.count { !it.check().complete }
@@ -718,14 +740,14 @@ private fun AppContent(
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(onClick = {
                         importPending = null
-                        state.appendAll(parsed.rows)
+                        state.appendAll(parsed.rows, parsed.departments.orEmpty())
                         viewChanged()
                         notice = Notice("${parsed.rows.size} ta qator jadval oxiriga qo‘shildi.")
                         refocus()
                     }) { Text("Oxiriga qo‘shish") }
                     Button(onClick = {
                         importPending = null
-                        state.replaceAll(parsed.rows)
+                        state.replaceAll(parsed.rows, parsed.departments ?: DEFAULT_DEPARTMENTS)
                         viewChanged()
                         selId = state.rows.firstOrNull()?.id
                         notice = Notice("Jadval fayldagi ${parsed.rows.size} ta qator bilan almashtirildi.")
@@ -813,6 +835,7 @@ private fun Toolbar(
     onExportBackup: () -> Unit,
     onExportCsv: () -> Unit,
     onOpenFolder: () -> Unit,
+    onDepartments: () -> Unit,
 ) {
     Column(Modifier.fillMaxWidth().background(Color(0xFFF8FAFC))) {
         Row(
@@ -822,12 +845,12 @@ private fun Toolbar(
         ) {
             Text("Reaktivlar hisobi", fontWeight = FontWeight.Bold, fontSize = 17.sp, color = SheetColors.Text)
             Spacer(Modifier.width(8.dp))
-            Button(onClick = onAdd) {
+            Button(onClick = onAdd, contentPadding = ToolbarPadding) {
                 Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(6.dp))
                 Text("Yangi qator")
             }
-            OutlinedButton(onClick = onDelete, enabled = canDelete) {
+            OutlinedButton(onClick = onDelete, enabled = canDelete, contentPadding = ToolbarPadding) {
                 Icon(Icons.Filled.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(6.dp))
                 Text("Qatorni o‘chirish")
@@ -835,8 +858,9 @@ private fun Toolbar(
             TextButton(onClick = onUndo, enabled = canUndo) { Text("↶ Bekor qilish") }
             TextButton(onClick = onRedo, enabled = canRedo) { Text("↷ Qayta bajarish") }
             Spacer(Modifier.weight(1f))
+            OutlinedButton(onClick = onDepartments, contentPadding = ToolbarPadding) { Text("Bo‘limlar") }
             Box {
-                OutlinedButton(onClick = { onFileMenu(true) }) {
+                OutlinedButton(onClick = { onFileMenu(true) }, contentPadding = ToolbarPadding) {
                     Text("Fayl")
                     Icon(Icons.Filled.ArrowDropDown, contentDescription = null)
                 }
@@ -881,11 +905,14 @@ private fun Toolbar(
     }
 }
 
+/** Ixcham tugmalar: eng tor oynada (1000 px) ham hammasi bir qatorga sig‘adi. */
+private val ToolbarPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
+
 @Composable
 private fun SearchBox(value: String, onValue: (String) -> Unit, focus: FocusRequester, onFocus: (Boolean) -> Unit) {
     Row(
         Modifier
-            .width(280.dp)
+            .width(250.dp)
             .height(34.dp)
             .background(Color.White, RoundedCornerShape(6.dp))
             .border(1.dp, Color(0xFFCBD2DB), RoundedCornerShape(6.dp))
@@ -995,6 +1022,133 @@ private fun StatusBar(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.width(360.dp).clickable(onClick = onOpenFolder),
+        )
+    }
+}
+
+/**
+ * «Bo‘limlar» oynasi: ro‘yxatga qo‘shish, nomini o‘zgartirish (boshqa bo‘lim nomi berilsa — birlashtirish) va
+ * yozilmagan bo‘limni olib tashlash. Har bir amal jadval tarixiga tushadi — oyna yopilgach Ctrl+Z bilan bekor qilinadi.
+ */
+@Composable
+private fun DepartmentsDialog(state: SheetState, onClose: () -> Unit) {
+    var newName by remember { mutableStateOf("") }
+    var renaming by remember { mutableStateOf<String?>(null) }
+    var renameText by remember { mutableStateOf("") }
+    var message by remember { mutableStateOf<Notice?>(null) }
+
+    fun show(change: SheetState.Change) {
+        message = change.message.ifEmpty { null }?.let { Notice(it, isError = !change.ok) }
+    }
+
+    fun add() {
+        val change = state.addDepartment(newName)
+        show(change)
+        if (change.ok) newName = ""
+    }
+
+    fun saveRename() {
+        val old = renaming ?: return
+        val change = state.renameDepartment(old, renameText)
+        show(change)
+        if (change.ok) renaming = null
+    }
+
+    AlertDialog(
+        onDismissRequest = onClose,
+        title = { Text("Bo‘limlar") },
+        text = {
+            Column(Modifier.width(560.dp)) {
+                Text(
+                    "«Bo‘lim» ustunida shu ro‘yxat chiqadi. Katakka ro‘yxatda yo‘q nom yozilsa, u ham shu yerga qo‘shiladi.",
+                    fontSize = 12.5.sp,
+                    color = SheetColors.Muted,
+                )
+                Spacer(Modifier.height(10.dp))
+                HorizontalDivider(color = SheetColors.Grid)
+                Column(Modifier.heightIn(max = 300.dp).verticalScroll(rememberScrollState())) {
+                    if (state.departments.isEmpty()) {
+                        Text("Ro‘yxat bo‘sh.", color = SheetColors.Muted, modifier = Modifier.padding(vertical = 10.dp))
+                    }
+                    state.departments.forEach { name ->
+                        val used = state.usage(name)
+                        Row(Modifier.fillMaxWidth().height(42.dp), verticalAlignment = Alignment.CenterVertically) {
+                            if (renaming == name) {
+                                DialogField(renameText, { renameText = it }, "Yangi nomi", "department-rename", ::saveRename, Modifier.weight(1f), autoFocus = true)
+                                TextButton(onClick = ::saveRename) { Text("Saqlash") }
+                                TextButton(onClick = { renaming = null; message = null }) { Text("Bekor") }
+                            } else {
+                                Text(
+                                    name,
+                                    fontSize = 13.5.sp,
+                                    color = SheetColors.Text,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                Text(if (used > 0) "$used ta qator" else "ishlatilmagan", fontSize = 12.sp, color = SheetColors.Muted)
+                                TextButton(onClick = { renaming = name; renameText = name; message = null }) { Text("Nomini o‘zgartirish") }
+                                TextButton(onClick = { show(state.removeDepartment(name)) }) { Text("Olib tashlash") }
+                            }
+                        }
+                        HorizontalDivider(color = SheetColors.Grid)
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    DialogField(newName, { newName = it }, "Yangi bo‘lim nomi", "department-new", ::add, Modifier.weight(1f))
+                    Spacer(Modifier.width(8.dp))
+                    Button(onClick = ::add, enabled = newName.isNotBlank()) { Text("Qo‘shish") }
+                }
+                message?.let {
+                    Text(
+                        it.text,
+                        fontSize = 12.5.sp,
+                        color = if (it.isError) SheetColors.Error else Color(0xFF1E3A8A),
+                        modifier = Modifier.padding(top = 10.dp),
+                    )
+                }
+            }
+        },
+        confirmButton = { Button(onClick = onClose) { Text("Yopish") } },
+    )
+}
+
+@Composable
+private fun DialogField(
+    value: String,
+    onValue: (String) -> Unit,
+    placeholder: String,
+    tag: String,
+    onEnter: () -> Unit,
+    modifier: Modifier,
+    autoFocus: Boolean = false,
+) {
+    val focus = remember { FocusRequester() }
+    if (autoFocus) LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+    Box(
+        modifier
+            .height(34.dp)
+            .background(Color.White, RoundedCornerShape(6.dp))
+            .border(1.dp, Color(0xFFCBD2DB), RoundedCornerShape(6.dp))
+            .padding(horizontal = 10.dp),
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        if (value.isEmpty()) Text(placeholder, color = SheetColors.Muted, fontSize = 13.sp)
+        BasicTextField(
+            value = value,
+            onValueChange = onValue,
+            singleLine = true,
+            textStyle = TextStyle(fontSize = 13.sp, color = SheetColors.Text),
+            cursorBrush = SolidColor(SheetColors.Text),
+            modifier = Modifier.fillMaxWidth().focusRequester(focus).testTag(tag).onPreviewKeyEvent { e ->
+                if (e.type == KeyEventType.KeyDown && (e.key == Key.Enter || e.key == Key.NumPadEnter)) {
+                    onEnter()
+                    true
+                } else {
+                    false
+                }
+            },
         )
     }
 }

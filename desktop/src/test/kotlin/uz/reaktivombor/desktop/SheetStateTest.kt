@@ -123,6 +123,130 @@ class SheetStateTest {
     }
 
     @Test
+    fun typingANewDepartmentAddsItToTheListAndUndoTakesBoth() {
+        val s = state(listOf(SheetRow(1, "A", createdAt = 1)))
+        s.setCell(1, Col.DEPARTMENT, "  kimyo ")
+        assertEquals("Kimyo", s.rows.single().department)
+        assertEquals(DEFAULT_DEPARTMENTS + "Kimyo", s.departments)
+        assertTrue(s.undo())
+        assertEquals("", s.rows.single().department)
+        assertEquals(DEFAULT_DEPARTMENTS, s.departments)
+        assertTrue(s.redo())
+        assertEquals(DEFAULT_DEPARTMENTS + "Kimyo", s.departments)
+    }
+
+    @Test
+    fun aKnownDepartmentIsNotAddedTwice() {
+        val s = state(listOf(SheetRow(1, "A", createdAt = 1)))
+        s.setCell(1, Col.DEPARTMENT, "BIOLOGIYA")
+        assertEquals("Biologiya", s.rows.single().department)
+        s.setCell(1, Col.DEPARTMENT, "Морфология")
+        assertEquals("Morfologiya", s.rows.single().department)
+        assertEquals(DEFAULT_DEPARTMENTS, s.departments)
+    }
+
+    @Test
+    fun aNumberInTheDepartmentColumnIsNotADepartment() {
+        val s = state(listOf(SheetRow(1, "A", createdAt = 1)))
+        s.setCell(1, Col.DEPARTMENT, "250")
+        assertEquals("250", s.rows.single().department) // yozilgani yo‘qolmaydi — katakda xato bo‘lib turadi
+        assertEquals(DEPARTMENT_NAME_ERROR, s.rows.single().check().errors[Col.DEPARTMENT])
+        assertEquals(DEFAULT_DEPARTMENTS, s.departments)
+    }
+
+    @Test
+    fun aNewRowStartedInTheDepartmentColumnAddsTheDepartment() {
+        val s = state()
+        val id = s.setCell(null, Col.DEPARTMENT, "Kimyo")
+        assertEquals("Kimyo", s.rows.single { it.id == id }.department)
+        assertTrue("Kimyo" in s.departments)
+    }
+
+    @Test
+    fun pastingAddsNewDepartmentsOnceAndOneUndoTakesThemBack() {
+        val s = state(listOf(SheetRow(1, "A", createdAt = 1), SheetRow(2, "B", createdAt = 2), SheetRow(3, "C", createdAt = 3)))
+        val count = s.paste("kimyo\t5\nBIOLOGIYA\t1\nKimyo\t2", listOf(1L, 2L, 3L), 0, Col.DEPARTMENT)
+        assertEquals(3, count)
+        assertEquals(listOf("Kimyo", "Biologiya", "Kimyo"), s.rows.map { it.department })
+        assertEquals(DEFAULT_DEPARTMENTS + "Kimyo", s.departments)
+        assertTrue(s.undo())
+        assertEquals(DEFAULT_DEPARTMENTS, s.departments)
+        assertEquals(listOf("", "", ""), s.rows.map { it.department })
+    }
+
+    @Test
+    fun renamingADepartmentRenamesItInTheRowsToo() {
+        val s = state(listOf(SheetRow(1, "A", department = "Biologiya", createdAt = 1), SheetRow(2, "B", department = "Gistologiya", createdAt = 2)))
+        val change = s.renameDepartment("Biologiya", " mikrobiologiya ")
+        assertTrue(change.message, change.ok)
+        assertEquals(listOf("Gistologiya", "Mikrobiologiya", "Morfologiya"), s.departments) // o‘rni o‘zgarmaydi
+        assertEquals(listOf("Mikrobiologiya", "Gistologiya"), s.rows.map { it.department })
+        assertTrue(s.undo())
+        assertEquals(DEFAULT_DEPARTMENTS, s.departments)
+        assertEquals(listOf("Biologiya", "Gistologiya"), s.rows.map { it.department })
+    }
+
+    @Test
+    fun renamingToAnotherDepartmentMergesThem() {
+        val s = state(listOf(SheetRow(1, "A", department = "Biologya", createdAt = 1), SheetRow(2, "B", department = "Biologiya", createdAt = 2)))
+        assertEquals(DEFAULT_DEPARTMENTS + "Biologya", s.departments)
+        val change = s.renameDepartment("Biologya", "biologiya")
+        assertTrue(change.message, change.ok)
+        assertEquals(DEFAULT_DEPARTMENTS, s.departments)
+        assertEquals(listOf("Biologiya", "Biologiya"), s.rows.map { it.department })
+        assertFalse(s.renameDepartment("Gistologiya", "  ").ok)
+        assertFalse(s.renameDepartment("Gistologiya", "123").ok)
+        assertFalse(s.renameDepartment("Yo‘q", "Kimyo").ok)
+    }
+
+    @Test
+    fun onlyAnUnusedDepartmentCanBeRemoved() {
+        val s = state(listOf(SheetRow(1, "A", department = "Biologiya", issuedAmount = "1", createdAt = 1)))
+        val refused = s.removeDepartment("Biologiya")
+        assertFalse(refused.ok)
+        assertTrue(refused.message, refused.message.contains("1 ta qatorda"))
+        assertEquals(DEFAULT_DEPARTMENTS, s.departments)
+        assertTrue(s.removeDepartment("Morfologiya").ok)
+        assertEquals(listOf("Gistologiya", "Biologiya"), s.departments)
+        assertTrue(s.undo())
+        assertEquals(DEFAULT_DEPARTMENTS, s.departments)
+    }
+
+    @Test
+    fun addingADepartmentChecksTheName() {
+        val s = state()
+        val revision = s.revision
+        assertTrue(s.addDepartment("  klinik  laboratoriya ").ok)
+        assertEquals(DEFAULT_DEPARTMENTS + "Klinik laboratoriya", s.departments)
+        assertTrue(s.revision > revision) // avtomatik saqlash ro‘yxat o‘zgarishini ham ko‘radi
+        assertFalse(s.addDepartment("BIOLOGIYA").ok)
+        assertFalse(s.addDepartment("биология").ok)
+        assertFalse(s.addDepartment("12.10.2026").ok)
+        assertFalse(s.addDepartment("").ok)
+        assertEquals(DEFAULT_DEPARTMENTS + "Klinik laboratoriya", s.departments)
+    }
+
+    @Test
+    fun openingAFileTakesItsDepartmentsAndAppendingMergesThem() {
+        val s = state(listOf(SheetRow(1, "A", department = "Kimyo", createdAt = 1)))
+        s.appendAll(listOf(SheetRow(0, "B", department = "fizika", createdAt = 2), SheetRow(0, "C", department = "kimyo", createdAt = 3)), listOf("Genetika"))
+        assertEquals(DEFAULT_DEPARTMENTS + listOf("Kimyo", "Genetika", "Fizika"), s.departments)
+        assertEquals(listOf("Kimyo", "Fizika", "Kimyo"), s.rows.map { it.department })
+        s.replaceAll(listOf(SheetRow(0, "D", department = "Botanika", createdAt = 4)), listOf("Zoologiya"))
+        assertEquals(listOf("Zoologiya", "Botanika"), s.departments)
+        assertTrue(s.undo())
+        assertEquals(DEFAULT_DEPARTMENTS + listOf("Kimyo", "Genetika", "Fizika"), s.departments)
+    }
+
+    @Test
+    fun rowsAreMatchedToTheListWhenTheTableOpens() {
+        val s = SheetState(listOf(SheetRow(1, "A", department = "biologiya", createdAt = 1)), listOf("Biologiya"))
+        assertEquals("Biologiya", s.rows.single().department)
+        assertEquals(listOf("Biologiya"), s.departments)
+        assertFalse(s.canUndo)
+    }
+
+    @Test
     fun changedSpotPointsAtTheUndoneCell() {
         val a = SheetRow(1, "A", "01.01.2026", createdAt = 1)
         val b = SheetRow(2, "B", createdAt = 2)

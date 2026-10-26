@@ -153,7 +153,10 @@ fun SheetGrid(
     onEditPress: () -> Unit,
     onSort: (Col) -> Unit,
     onRowMenu: (rowId: Long) -> Unit,
-    onPickUnit: (String) -> Unit,
+    // «Bo‘lim» katagida ochiladigan ro‘yxat.
+    departments: List<String>,
+    // Ochilgan ro‘yxatdan tanlandi (birlik yoki bo‘lim, yangi bo‘lim ham) — qiymat aynan shunday yoziladi.
+    onPick: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val horizontal = rememberScrollState()
@@ -208,7 +211,8 @@ fun SheetGrid(
                             onEditValue = onEditValue,
                             onKey = onKey,
                             onFocusLost = onFocusLost,
-                            onPickUnit = onPickUnit,
+                            departments = departments,
+                            onPick = onPick,
                         )
                     }
                     Row(Modifier.height(ROW_HEIGHT.dp).background(rowColor)) {
@@ -378,7 +382,8 @@ private fun DataCell(
     onEditValue: (TextFieldValue) -> Unit,
     onKey: (KeyEvent) -> Boolean,
     onFocusLost: () -> Unit,
-    onPickUnit: (String) -> Unit,
+    departments: List<String>,
+    onPick: (String) -> Unit,
 ) {
     val row = line.row
     val check = line.check
@@ -493,20 +498,40 @@ private fun DataCell(
                         .border(2.dp, SheetColors.Accent)
                         .then(if (editing) Modifier else Modifier.pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent() } }),
                 )
-                if (col.choices.isNotEmpty() && editing) {
+                val choices = if (col == Col.DEPARTMENT) departments else col.choices
+                // F2 / ikki marta bosilganda (matn — hozirgi qiymat) hammasi; yozilganda — mos keladiganlari (aynan mosi tepada).
+                val typedText = editValue.text.trim()
+                val typed = searchKey(typedText)
+                val filtering = typed.isNotEmpty() && typed != row?.get(col)?.let(::searchKey)
+                val matching = if (filtering) choices.filter { searchKey(it).startsWith(typed) }.sortedBy { searchKey(it) != typed } else choices
+                // Bo‘lim: ro‘yxatda yo‘q nom — yangi bo‘lim qilib qo‘shish (mos bo‘lim bo‘lmasa, Enter ham shuni qiladi).
+                val newDepartment = if (col == Col.DEPARTMENT && filtering) {
+                    matchDepartment(typedText, departments).takeIf { name -> isDepartmentName(name) && departments.none { sameDepartment(it, name) } }
+                } else {
+                    null
+                }
+                val options = matching.ifEmpty { if (newDepartment == null) choices else emptyList() }
+                if (col.kind == Col.Kind.CHOICE && editing && (options.isNotEmpty() || newDepartment != null)) {
                     DropdownMenu(
                         expanded = true,
                         onDismissRequest = {},
                         offset = DpOffset(0.dp, 2.dp),
                         properties = PopupProperties(focusable = false),
                     ) {
-                        // F2 / ikki marta bosilganda (matn — hozirgi qiymat) hammasi; yozilganda — mos keladiganlari.
-                        val typed = editValue.text.trim().lowercase()
-                        val current = row?.get(col)?.lowercase()
-                        val options = if (typed.isEmpty() || typed == current) col.choices else col.choices.filter { it.lowercase().startsWith(typed) }
-                        options.ifEmpty { col.choices }.forEach { choice ->
-                            DropdownMenuItem(text = { Text(choice) }, onClick = { onPickUnit(choice) })
+                        val addItem: @Composable () -> Unit = {
+                            newDepartment?.let { name ->
+                                DropdownMenuItem(
+                                    text = { Text("+ «$name» — yangi bo‘lim", color = SheetColors.Accent) },
+                                    onClick = { onPick(name) },
+                                    modifier = Modifier.testTag("new-department"),
+                                )
+                            }
                         }
+                        if (matching.isEmpty()) addItem()
+                        options.forEach { choice ->
+                            DropdownMenuItem(text = { Text(choice) }, onClick = { onPick(choice) })
+                        }
+                        if (matching.isNotEmpty()) addItem()
                     }
                 }
             }

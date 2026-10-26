@@ -50,7 +50,10 @@ class SheetTest {
         val tooMuch = xloroform.copy(department = "Morfologiya", issuedAmount = "321").check()
         assertEquals("Berilgan miqdor ombordagi miqdordan ko‘p bo‘lishi mumkin emas.", tooMuch.errors[Col.ISSUED])
         assertNull(tooMuch.remainder)
-        assertEquals("Bo‘lim: Gistologiya, Biologiya yoki Morfologiya.", xloroform.copy(department = "Kimyo", issuedAmount = "1").check().errors[Col.DEPARTMENT])
+        // Bo‘limlar ro‘yxati o‘zgaradi — istalgan nom bo‘lim bo‘la oladi, faqat harfsiz qiymat (adashib qo‘yilgan son) xato.
+        assertTrue(xloroform.copy(department = "Kimyo", issuedAmount = "1").check().complete)
+        assertEquals(DEPARTMENT_NAME_ERROR, xloroform.copy(department = "250", issuedAmount = "1").check().errors[Col.DEPARTMENT])
+        assertEquals(DEPARTMENT_NAME_ERROR, xloroform.copy(department = "B".repeat(DEPARTMENT_MAX + 1), issuedAmount = "1").check().errors[Col.DEPARTMENT])
     }
 
     @Test
@@ -94,11 +97,41 @@ class SheetTest {
         assertEquals("dona", normalizeUnit("ta"))
         assertEquals("tonna", normalizeUnit("tonna"))
         assertEquals("ml", SheetRow(1, createdAt = 1).with(Col.UNIT, "Мл").unit)
-        assertEquals("Biologiya", normalizeDepartment("b"))
-        assertEquals("Gistologiya", normalizeDepartment(" GIST "))
-        assertEquals("Morfologiya", normalizeDepartment("Морфология"))
-        assertEquals("Kimyo", normalizeDepartment("Kimyo"))
-        assertEquals("Gistologiya", SheetRow(1, createdAt = 1).with(Col.DEPARTMENT, "g").department)
+        val list = DEFAULT_DEPARTMENTS
+        assertEquals("Biologiya", matchDepartment("b", list, prefix = true))
+        assertEquals("Gistologiya", matchDepartment(" GIST ", list, prefix = true))
+        assertEquals("Morfologiya", matchDepartment("Морфология", list))
+        assertEquals("Biologiya", matchDepartment("biologiya", list))
+        // Boshi faqat yozib turilganda yetadi (fayl va nusxadagi nom — to‘liq nom).
+        assertEquals("B", matchDepartment("b", list))
+        // Ro‘yxatda yo‘q — yangi bo‘lim: bosh harfi katta, ortiqcha bo‘shliqsiz.
+        assertEquals("Kimyo", matchDepartment("kimyo", list, prefix = true))
+        assertEquals("Klinik laboratoriya", matchDepartment("  klinik   laboratoriya ", list))
+        assertEquals("", matchDepartment("   ", list, prefix = true))
+    }
+
+    @Test
+    fun departmentPrefixPicksTheFirstInListOrderButAnExactNameWins() {
+        val list = listOf("Morfologiya", "Mikrobiologiya", "Bio", "Biologiya")
+        assertEquals("Morfologiya", matchDepartment("m", list, prefix = true))
+        assertEquals("Mikrobiologiya", matchDepartment("mi", list, prefix = true))
+        assertEquals("Bio", matchDepartment("bio", list, prefix = true))
+        assertEquals("Biologiya", matchDepartment("biol", list, prefix = true))
+        // o‘ / o' / o’ va katta-kichik harf farqlanmaydi.
+        assertEquals("Mo‘ljal", matchDepartment("MO'LJAL", listOf("Mo‘ljal")))
+    }
+
+    @Test
+    fun theDepartmentListKeepsUsedNamesWithoutDuplicates() {
+        val rows = listOf(
+            SheetRow(1, "A", department = "Kimyo", createdAt = 1),
+            SheetRow(2, "B", department = "biologiya", createdAt = 2),
+            SheetRow(3, "C", department = "250", createdAt = 3), // harfsiz — bo‘lim emas
+        )
+        assertEquals(
+            listOf("Gistologiya", "Biologiya", "Morfologiya", "Kimyo"),
+            withUsedDepartments(DEFAULT_DEPARTMENTS + listOf(" gistologiya ", "", "  "), rows),
+        )
     }
 
     @Test

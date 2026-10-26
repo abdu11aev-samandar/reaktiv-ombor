@@ -28,10 +28,25 @@ class SheetStore(val file: Path) {
     val backupFile: Path = file.resolveSibling(file.fileName.toString().removeSuffix(".json") + ".bak.json")
     val legacyFile: Path = file.resolveSibling(LEGACY_FILE_NAME)
 
-    data class Loaded(val rows: List<SheetRow>, val warning: String? = null)
+    data class Loaded(
+        val rows: List<SheetRow>,
+        val warning: String? = null,
+        val departments: List<String> = withUsedDepartments(DEFAULT_DEPARTMENTS, rows),
+    )
 
-    /** O‘qilgan fayl: qatorlar, tashlab ketilgan buzuq qatorlar soni va eski (1-versiya) fayl ekani. */
-    data class Parsed(val rows: List<SheetRow>, val skipped: Int, val migrated: Boolean = false)
+    /**
+     * O‘qilgan fayl: qatorlar, tashlab ketilgan buzuq qatorlar soni, eski (1-versiya) fayl ekani va bo‘limlar
+     * ro‘yxati ([departments] null — faylda ro‘yxat yo‘q: 1.0.6 gacha yoki telefon zaxirasi).
+     */
+    data class Parsed(
+        val rows: List<SheetRow>,
+        val skipped: Int,
+        val migrated: Boolean = false,
+        val departments: List<String>? = null,
+    ) {
+        /** Jadval shu fayldan ochilganda: fayldagi ro‘yxat yoki boshlang‘ich bo‘limlar, qatorlarda yozilganlari bilan. */
+        val allDepartments: List<String> get() = withUsedDepartments(departments ?: DEFAULT_DEPARTMENTS, rows)
+    }
 
     fun load(): Loaded {
         if (!Files.exists(file)) return loadLegacy()
@@ -46,7 +61,7 @@ class SheetStore(val file: Path) {
                     )
                 }
             }
-            return Loaded(parsed.rows, notes.joinToString(" ").ifEmpty { null })
+            return Loaded(parsed.rows, notes.joinToString(" ").ifEmpty { null }, parsed.allDepartments)
         }
 
         // Fayl buzilgan: uni o‘chirmaymiz, yoniga nusxa qilib qo‘yamiz va oldingi saqlangan holatni ochamiz.
@@ -55,7 +70,11 @@ class SheetStore(val file: Path) {
         runCatching { Files.copy(file, broken, StandardCopyOption.REPLACE_EXISTING) }
         val fromBackup = if (Files.exists(backupFile)) runCatching { read(backupFile) }.getOrNull() else null
         return if (fromBackup != null) {
-            Loaded(fromBackup, "Ma’lumotlar fayli buzilgan edi — oxirgi zaxira nusxadan tiklandi. Buzilgan fayl: ${broken.fileName}")
+            Loaded(
+                fromBackup.rows,
+                "Ma’lumotlar fayli buzilgan edi — oxirgi zaxira nusxadan tiklandi. Buzilgan fayl: ${broken.fileName}",
+                fromBackup.allDepartments,
+            )
         } else {
             Loaded(emptyList(), "Ma’lumotlar faylini o‘qib bo‘lmadi. U ${broken.fileName} nomi bilan saqlab qo‘yildi.")
         }
@@ -68,10 +87,10 @@ class SheetStore(val file: Path) {
      * [revision] — jadval holatining raqami (SheetState.revision): kechikib qolgan eskiroq holat yangisining ustidan yozilmaydi.
      */
     @Synchronized
-    fun save(rows: List<SheetRow>, revision: Int? = null) {
+    fun save(rows: List<SheetRow>, revision: Int? = null, departments: List<String> = withUsedDepartments(DEFAULT_DEPARTMENTS, rows)) {
         if (revision != null && revision <= savedRevision) return
         Files.createDirectories(file.parent)
-        val json = toJson(rows, LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME))
+        val json = toJson(rows, LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME), departments)
         val temp = file.resolveSibling(file.fileName.toString() + ".tmp")
         Files.writeString(temp, json, StandardCharsets.UTF_8)
         // Oldingi holat nusxasi — imkon bo‘lsa. U yozilmasa ham (band, faqat o‘qish uchun) asosiy fayl saqlanadi.
@@ -90,7 +109,7 @@ class SheetStore(val file: Path) {
         val candidates = listOf(legacyFile, legacyFile.resolveSibling(LEGACY_BACKUP_NAME)).filter { Files.exists(it) }
         for (path in candidates) {
             val parsed = runCatching { parse(Files.readString(path, StandardCharsets.UTF_8)) }.getOrNull() ?: continue
-            return Loaded(parsed.rows, "$MIGRATED_NOTE Eski fayl o‘zgarishsiz qoldi: ${path.fileName}.")
+            return Loaded(parsed.rows, "$MIGRATED_NOTE Eski fayl o‘zgarishsiz qoldi: ${path.fileName}.", parsed.allDepartments)
         }
         return if (candidates.isEmpty()) {
             Loaded(emptyList())
@@ -102,7 +121,7 @@ class SheetStore(val file: Path) {
     private fun isNewer(a: Path, b: Path): Boolean =
         runCatching { Files.exists(a) && Files.getLastModifiedTime(a) > Files.getLastModifiedTime(b) }.getOrDefault(false)
 
-    private fun read(path: Path): List<SheetRow> = fromJson(Files.readString(path, StandardCharsets.UTF_8))
+    private fun read(path: Path): Parsed = parse(Files.readString(path, StandardCharsets.UTF_8))
 
     companion object {
         const val APP_NAME = "Reaktivlar"
@@ -126,7 +145,8 @@ class SheetStore(val file: Path) {
             return dir.resolve(FILE_NAME)
         }
 
-        fun toJson(rows: List<SheetRow>, exportedAt: String): String {
+        /** [departments] — bo‘limlar ro‘yxati (hali hech qayerda yozilmaganlari ham saqlanadi). */
+        fun toJson(rows: List<SheetRow>, exportedAt: String, departments: List<String> = withUsedDepartments(DEFAULT_DEPARTMENTS, rows)): String {
             val array = JSONArray()
             rows.filterNot { it.isBlank }.forEach { row ->
                 array.put(
@@ -147,6 +167,7 @@ class SheetStore(val file: Path) {
                 .put("format", Backup.FORMAT)
                 .put("version", VERSION)
                 .put("exportedAt", exportedAt)
+                .put("departments", JSONArray(withUsedDepartments(departments, rows)))
                 .put("rows", array)
                 .toString(2)
         }
@@ -165,6 +186,8 @@ class SheetStore(val file: Path) {
             if (version > VERSION) throw BackupException("Zaxira dasturning yangiroq versiyasida olingan. Dasturni yangilang.")
 
             val (rows, skipped) = if (version >= 2) readRows(root) else readVersion1(root)
+            val listed = if (version >= 2) readDepartments(root) else null
+            val known = listed ?: DEFAULT_DEPARTMENTS
             // Bir xil vaqtli qatorlar keyingi saqlash–ochishda o‘rin almashmasin: vaqtlar qat’iy o‘sadigan qilinadi.
             var last = Long.MIN_VALUE
             val ordered = rows.withIndex()
@@ -172,9 +195,16 @@ class SheetStore(val file: Path) {
                 .mapIndexed { index, item ->
                     val createdAt = if (item.value.createdAt > last) item.value.createdAt else last + 1
                     last = createdAt
-                    item.value.copy(id = index + 1L, createdAt = createdAt)
+                    // "biologiya" → ro‘yxatdagi «Biologiya»; ro‘yxatda yo‘q nom ro‘yxatga qo‘shiladi (allDepartments).
+                    item.value.copy(id = index + 1L, createdAt = createdAt, department = matchDepartment(item.value.department, known))
                 }
-            return Parsed(ordered, skipped, migrated = version < 2)
+            return Parsed(ordered, skipped, migrated = version < 2, departments = listed)
+        }
+
+        /** Fayldagi bo‘limlar ro‘yxati (1.0.7 dan). Yo‘q yoki buzuq bo‘lsa — null. */
+        private fun readDepartments(root: JSONObject): List<String>? {
+            val array = root.optJSONArray("departments") ?: return null
+            return withUsedDepartments((0 until array.length()).mapNotNull { array.opt(it) as? String }, emptyList())
         }
 
         private fun readRows(root: JSONObject): Pair<List<SheetRow>, Int> {
@@ -195,7 +225,7 @@ class SheetStore(val file: Path) {
                     unit = normalizeUnit(item.optString("unit", "g")),
                     expiresAt = displayDate(item.optString("expiresAt")),
                     stockAmount = inputAmount(item.optString("stockAmount")),
-                    department = normalizeDepartment(item.optString("department")),
+                    department = item.optString("department").trim(),
                     issuedAmount = inputAmount(item.optString("issuedAmount")),
                     createdAt = item.optLong("createdAt", 0L),
                     legacyReceivedAt = displayDate(item.optString("receivedAt")),

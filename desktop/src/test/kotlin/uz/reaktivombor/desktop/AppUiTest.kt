@@ -11,25 +11,33 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.onNodeWithText
-import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.isRoot
+import androidx.compose.ui.test.onLast
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.doubleClick
 import androidx.compose.ui.test.pressKey
 import androidx.compose.ui.test.runComposeUiTest
+import androidx.compose.ui.test.runDesktopComposeUiTest
+import androidx.compose.ui.test.getBoundsInRoot
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.test.ComposeUiTest
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.text.TextLayoutResult
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
+import kotlin.math.ceil
 import java.nio.file.Path
 import java.time.LocalDate
 import javax.imageio.ImageIO
@@ -50,7 +58,8 @@ class AppUiTest {
     private fun ComposeUiTest.screenshot(name: String) {
         waitForIdle()
         val dir = File("build/screenshots").apply { mkdirs() }
-        ImageIO.write(onRoot().captureToImage().toAwtImage(), "png", File(dir, "$name.png"))
+        // Oyna (dialog) ochiq bo‘lsa — uning qatlami.
+        ImageIO.write(onAllNodes(isRoot()).onLast().captureToImage().toAwtImage(), "png", File(dir, "$name.png"))
     }
 
     private fun SemanticsNodeInteraction.key(k: Key) = performKeyInput { pressKey(k) }
@@ -372,6 +381,96 @@ class AppUiTest {
         assertTrue(etil.check().complete)
         onNodeWithText("700").assertExists() // Qoldiq = 750 − 50
         screenshot("05-qoldiq")
+    }
+
+    @Test
+    fun typingANewDepartmentAddsItToTheList() = runComposeUiTest {
+        val state = SheetState(SheetStore.fromJson(SAMPLE))
+        app(state)
+        onNodeWithTag("cell-1-G").performClick() // Etil spirti → Bo‘lim
+        type("kimyo")
+        onNodeWithTag("new-department").assertExists() // ro‘yxatda yo‘q — «+ yangi bo‘lim»
+        onNodeWithTag("cell-editor").key(Key.Enter)
+        waitForIdle()
+        assertEquals("Kimyo", state.byName("Etil spirti").department)
+        assertEquals(DEFAULT_DEPARTMENTS + "Kimyo", state.departments)
+        onNodeWithText("«Kimyo» — yangi bo‘lim", substring = true).assertExists()
+        // Endi u ham ro‘yxatda: boshi yetadi.
+        onNodeWithTag("cell-2-G").performClick()
+        type("ki", Key.Enter)
+        waitForIdle()
+        assertEquals("Kimyo", state.byName("Xloroform").department)
+        assertEquals(DEFAULT_DEPARTMENTS + "Kimyo", state.departments)
+    }
+
+    @Test
+    fun aNewDepartmentCanStartLikeAnExistingOne() = runComposeUiTest {
+        val state = SheetState(SheetStore.fromJson(SAMPLE))
+        app(state)
+        onNodeWithTag("cell-1-G").performClick()
+        type("Mor")
+        onNodeWithText("Morfologiya").assertExists() // Enter — shu
+        onNodeWithTag("new-department").performClick() // «+ «Mor» — yangi bo‘lim»: aynan shu nom yoziladi
+        waitForIdle()
+        assertEquals("Mor", state.byName("Etil spirti").department)
+        assertEquals(DEFAULT_DEPARTMENTS + "Mor", state.departments)
+    }
+
+    @Test
+    fun theDepartmentsWindowAddsRenamesAndRemoves() = runComposeUiTest {
+        val rows = SheetStore.fromJson(SAMPLE).map { if (it.name == "Etil spirti") it.copy(department = "Biologiya", issuedAmount = "50") else it }
+        val state = SheetState(rows)
+        app(state)
+        onNodeWithText("Bo‘limlar").performClick()
+        onNodeWithTag("department-new").performTextInput("kimyo")
+        onNodeWithTag("department-new").key(Key.Enter)
+        waitForIdle()
+        assertEquals(DEFAULT_DEPARTMENTS + "Kimyo", state.departments)
+        onNodeWithText("«Kimyo» qo‘shildi.").assertExists()
+
+        // Biologiya (ikkinchisi) — nomi qatorlarda ham o‘zgaradi.
+        onAllNodesWithText("Nomini o‘zgartirish")[1].performClick()
+        onNodeWithTag("department-rename").performTextClearance()
+        onNodeWithTag("department-rename").performTextInput("Mikrobiologiya")
+        onNodeWithTag("department-rename").key(Key.Enter)
+        waitForIdle()
+        assertEquals(listOf("Gistologiya", "Mikrobiologiya", "Morfologiya", "Kimyo"), state.departments)
+        assertEquals("Mikrobiologiya", state.byName("Etil spirti").department)
+
+        // Yozilgan bo‘limni olib tashlab bo‘lmaydi, yozilmaganini — bo‘ladi.
+        onAllNodesWithText("Olib tashlash")[1].performClick()
+        waitForIdle()
+        assertEquals(4, state.departments.size)
+        onNodeWithText("1 ta qatorda yozilgan", substring = true).assertExists()
+        onAllNodesWithText("Olib tashlash")[3].performClick()
+        waitForIdle()
+        assertEquals(listOf("Gistologiya", "Mikrobiologiya", "Morfologiya"), state.departments)
+        screenshot("06-bolimlar")
+
+        onNodeWithText("Yopish").performClick()
+        waitForIdle()
+        // Oyna yopilgach Ctrl+Z oxirgi amalni (olib tashlashni) bekor qiladi.
+        onNodeWithTag("cell-editor").performKeyInput { keyDown(Key.CtrlLeft); pressKey(Key.Z); keyUp(Key.CtrlLeft) }
+        waitForIdle()
+        assertEquals(listOf("Gistologiya", "Mikrobiologiya", "Morfologiya", "Kimyo"), state.departments)
+    }
+
+    @Test
+    fun theToolbarFitsTheNarrowestWindow() = runDesktopComposeUiTest(width = 1000, height = 700) {
+        app(SheetState(SheetStore.fromJson(SAMPLE)))
+        // Oynaning eng kichik eni 1000. Sig‘masa, «Fayl» tugmasi siqilib harflari ustma-ust tushadi (bo‘yi ~100).
+        listOf("Fayl", "Bo‘limlar", "↷ Qayta bajarish").forEach { label ->
+            val button = onNodeWithText(label).getBoundsInRoot()
+            assertTrue("$label: $button", button.bottom - button.top < 60.dp)
+            assertTrue("$label: $button", button.right <= 1000.dp)
+        }
+        // Filtr tugmasi bir qatorli (o‘ralmaydi) — sig‘masa, matni kesiladi.
+        val layout = mutableListOf<TextLayoutResult>()
+        onNodeWithText("Tugallanmagan  1", useUnmergedTree = true).fetchSemanticsNode()
+            .config[SemanticsActions.GetTextLayoutResult].action?.invoke(layout)
+        val text = layout.single()
+        assertTrue("«Tugallanmagan» kesilib qolgan: ${text.size}", text.size.width >= ceil(text.multiParagraph.intrinsics.maxIntrinsicWidth))
+        screenshot("07-tor-oyna")
     }
 
     @Test

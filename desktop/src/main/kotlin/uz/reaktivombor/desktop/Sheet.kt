@@ -72,8 +72,13 @@ object DateText {
 /** O‘lchov birliklari — qog‘ozdagi jadval tartibida. */
 val UNITS = listOf("l", "ml", "kg", "g", "dona")
 
-/** Bo‘limlar: faqat shular yoziladi (hisobot va filtr to‘g‘ri chiqishi uchun). */
-val DEPARTMENTS = listOf("Gistologiya", "Biologiya", "Morfologiya")
+/**
+ * Yangi jadvaldagi bo‘limlar. Ro‘yxat jadval bilan birga faylda saqlanadi: katakka yangi nom yozilsa, unga qo‘shiladi;
+ * «Bo‘limlar» oynasida nomi o‘zgartiriladi yoki olib tashlanadi.
+ */
+val DEFAULT_DEPARTMENTS = listOf("Gistologiya", "Biologiya", "Morfologiya")
+
+const val DEPARTMENT_MAX = 60
 
 /** Birlikni tozalaydi: "ML" → "ml", "gr"/"г" → "g". Noma’lum bo‘lsa — o‘zgarishsiz (keyin xato ko‘rsatiladi). */
 fun normalizeUnit(raw: String): String {
@@ -86,13 +91,46 @@ private val UNIT_ALIASES = mapOf(
     "мл" to "ml", "кг" to "kg", "л" to "l", "litr" to "l", "дона" to "dona", "ta" to "dona", "шт" to "dona",
 )
 
-/** "b", "BIO", "Биология" → "Biologiya". Mos kelmasa — o‘zgarishsiz (keyin xato ko‘rsatiladi). */
-fun normalizeDepartment(raw: String): String {
-    val text = raw.trim()
-    val key = text.lowercase()
-    if (key.isEmpty()) return ""
-    return DEPARTMENTS.firstOrNull { it.lowercase().startsWith(key) } ?: DEPARTMENT_ALIASES[key] ?: text
+/** Qidiruv va bo‘lim nomlari: katta-kichik harf va o‘ / o' / o’ farqlanmaydi. */
+fun searchKey(value: String): String = value.replace(Regex("['`’ʻʼ]"), "‘").lowercase()
+
+/** Bo‘lim nomi harf bilan yoziladi — adashib bu ustunga qo‘yilgan son yoki sana yangi bo‘lim bo‘lib qolmasin. */
+fun isDepartmentName(name: String): Boolean {
+    val text = name.trim()
+    return text.any { it.isLetter() } && text.codePointCount(0, text.length) <= DEPARTMENT_MAX
 }
+
+/** Bitta bo‘limmi: katta-kichik harf va o‘ / o' / o’ farqlanmaydi. */
+fun sameDepartment(a: String, b: String): Boolean = searchKey(a.trim()) == searchKey(b.trim())
+
+/**
+ * Yozilgan nomni ro‘yxatdagi bo‘limga keltiradi: "biologiya", "Биология" → "Biologiya". [prefix] bo‘lsa boshi ham
+ * yetadi ("b" → "Biologiya"; bir nechtasiga mos kelsa — ro‘yxatda birinchisi, ochilgan ro‘yxatdagi kabi).
+ * Ro‘yxatda yo‘q nom — yangi bo‘lim: bosh harfi katta, ortiqcha bo‘shliqlarsiz.
+ */
+fun matchDepartment(raw: String, departments: List<String>, prefix: Boolean = false): String {
+    val text = raw.trim().replace(SPACES, " ")
+    if (text.isEmpty()) return ""
+    val key = searchKey(text)
+    departments.firstOrNull { searchKey(it) == key }?.let { return it }
+    DEPARTMENT_ALIASES[key]?.let { name -> return departments.firstOrNull { sameDepartment(it, name) } ?: name }
+    if (prefix) departments.firstOrNull { searchKey(it).startsWith(key) }?.let { return it }
+    return text.replaceFirstChar { it.titlecase() }
+}
+
+/** [departments] (takrorlarsiz, faqat to‘g‘ri nomlar) va qatorlarda yozilgan, lekin ro‘yxatda yo‘q bo‘limlar — oxirida. */
+fun withUsedDepartments(departments: List<String>, rows: List<SheetRow>): List<String> {
+    val result = mutableListOf<String>()
+    (departments + rows.map { it.department }).forEach { raw ->
+        val name = raw.trim().replace(SPACES, " ")
+        if (isDepartmentName(name) && result.none { sameDepartment(it, name) }) result += name
+    }
+    return result
+}
+
+private val SPACES = Regex("""\s+""")
+
+const val DEPARTMENT_NAME_ERROR = "Bo‘lim nomi harf bilan yozilishi kerak ($DEPARTMENT_MAX belgigacha)."
 
 private val DEPARTMENT_ALIASES = mapOf(
     "гистология" to "Gistologiya", "биология" to "Biologiya", "морфология" to "Morfologiya",
@@ -121,13 +159,9 @@ enum class Col(val title: String, val widthDp: Int, val kind: Kind) {
     val alignEnd: Boolean get() = kind == Kind.DATE || kind == Kind.AMOUNT || kind == Kind.COMPUTED
     val letter: Char get() = 'A' + ordinal
 
-    /** Ro‘yxatdan tanlanadigan qiymatlar (birlik, bo‘lim). */
+    /** Ro‘yxatdan tanlanadigan o‘zgarmas qiymatlar (birlik). Bo‘limlar ro‘yxati jadval bilan saqlanadi — SheetState.departments. */
     val choices: List<String>
-        get() = when (this) {
-            UNIT -> UNITS
-            DEPARTMENT -> DEPARTMENTS
-            else -> emptyList()
-        }
+        get() = if (this == UNIT) UNITS else emptyList()
 }
 
 /**
@@ -168,7 +202,8 @@ data class SheetRow(
         Col.UNIT -> copy(unit = normalizeUnit(value))
         Col.EXPIRES -> copy(expiresAt = value)
         Col.STOCK -> copy(stockAmount = value)
-        Col.DEPARTMENT -> copy(department = normalizeDepartment(value))
+        // Ro‘yxatdagi nomga SheetState keltiradi (unga yangi bo‘lim ham o‘sha yerda qo‘shiladi).
+        Col.DEPARTMENT -> copy(department = value.trim())
         Col.ISSUED -> copy(issuedAmount = value)
         Col.REMAINDER, Col.DAYS_LEFT -> this
     }
@@ -207,7 +242,7 @@ data class SheetRow(
         val dept = department.trim()
         val issued = amount(issuedAmount, Col.ISSUED, "Berilgan miqdor", required = false, errors)
         when {
-            dept.isNotEmpty() && dept !in DEPARTMENTS -> errors[Col.DEPARTMENT] = "Bo‘lim: Gistologiya, Biologiya yoki Morfologiya."
+            dept.isNotEmpty() && !isDepartmentName(dept) -> errors[Col.DEPARTMENT] = DEPARTMENT_NAME_ERROR
             dept.isEmpty() && issuedAmount.isNotBlank() -> errors[Col.DEPARTMENT] = "Qaysi bo‘limga berilganini tanlang."
         }
         if (dept.isNotEmpty() && issuedAmount.isBlank()) errors[Col.ISSUED] = "Bo‘limga berilgan miqdorni kiriting."

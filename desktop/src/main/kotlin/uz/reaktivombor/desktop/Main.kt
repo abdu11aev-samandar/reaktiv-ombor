@@ -41,7 +41,7 @@ fun main() {
     }
 
     val loaded = store.load()
-    val state = SheetState(loaded.rows)
+    val state = SheetState(loaded.rows, loaded.departments)
 
     // Windows o‘chirilganda, qayta yuklanganda, foydalanuvchi chiqqanda yoki yangi MSI dasturni yopganda oynaga
     // “yopilish” xabari kelmaydi: AWT buni SIGTERM qiladi va faqat shutdown hook’lar ishlaydi. Yozib turilgan katak ham saqlansin.
@@ -54,7 +54,7 @@ fun main() {
             }
             // Chegaralangan kutish: dastur qotib qolgan bo‘lsa ham Windows’ning o‘chishini to‘xtatmaymiz.
             flushed.await(2, TimeUnit.SECONDS)
-            store.save(state.rows, state.revision)
+            store.save(state.rows, state.revision, state.departments)
         }
     })
 
@@ -76,7 +76,7 @@ fun main() {
             onCloseRequest = {
                 // Katakda yozib turilgan (Enter bosilmagan) qiymat ham saqlansin.
                 state.flushPendingEdit()
-                val error = runCatching { store.save(state.rows, state.revision) }.exceptionOrNull()
+                val error = runCatching { store.save(state.rows, state.revision, state.departments) }.exceptionOrNull()
                 if (error == null || confirmCloseWithoutSaving(error)) exitApplication()
             },
             title = "Reaktivlar hisobi",
