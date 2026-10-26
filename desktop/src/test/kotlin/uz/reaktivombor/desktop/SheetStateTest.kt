@@ -247,6 +247,27 @@ class SheetStateTest {
     }
 
     @Test
+    fun aRenamedOrRemovedDefaultDoesNotComeBackThroughItsRussianName() {
+        val s = state(listOf(SheetRow(1, "A", createdAt = 1)))
+        assertTrue(s.renameDepartment("Gistologiya", "Gistologiya bo‘limi").ok)
+        s.setCell(1, Col.DEPARTMENT, "гистология")
+        assertFalse("Gistologiya" in s.departments)
+        assertTrue(s.removeDepartment("Morfologiya").ok)
+        assertTrue(s.addDepartment("morphology").ok)
+        assertEquals("Morphology", s.departments.last())
+    }
+
+    @Test
+    fun appendedRowsWithTwoSpellingsBecomeOneDepartment() {
+        val s = state(listOf(SheetRow(1, "A", createdAt = 1)))
+        s.appendAll(listOf(SheetRow(0, "B", department = "O'simliklar", createdAt = 2), SheetRow(0, "C", department = "o‘simliklar", createdAt = 3)))
+        assertEquals(listOf("", "O'simliklar", "O'simliklar"), s.rows.map { it.department })
+        assertEquals(DEFAULT_DEPARTMENTS + "O'simliklar", s.departments)
+        s.replaceAll(listOf(SheetRow(0, "D", department = "KIMYO", createdAt = 4), SheetRow(0, "E", department = "Kimyo", createdAt = 5)))
+        assertEquals(listOf("KIMYO", "KIMYO"), s.rows.map { it.department })
+    }
+
+    @Test
     fun changedSpotPointsAtTheUndoneCell() {
         val a = SheetRow(1, "A", "01.01.2026", createdAt = 1)
         val b = SheetRow(2, "B", createdAt = 2)

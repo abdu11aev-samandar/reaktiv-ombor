@@ -61,6 +61,11 @@ class SheetStoreTest {
         """.trimIndent()
         val parsed = SheetStore.parse(text)
         assertEquals(null, parsed.departments)
+        // 1.0.6 da bir bo‘lim ikki xil yozilgan bo‘lishi mumkin edi — yuklanganda bittaga keltiriladi.
+        val twoSpellings = SheetStore.parse(
+            """{"format":"reaktiv-ombor","version":2,"rows":[{"name":"A","department":"KIMYO","createdAt":1},{"name":"B","department":"Kimyo","createdAt":2}]}""",
+        )
+        assertEquals(listOf("KIMYO", "KIMYO"), twoSpellings.rows.map { it.department })
         assertEquals(listOf("Kimyo", "Biologiya"), parsed.rows.map { it.department })
         assertEquals(DEFAULT_DEPARTMENTS + "Kimyo", parsed.allDepartments)
         val file = tmp.root.toPath().resolve("reaktivlar.json")

@@ -135,6 +135,42 @@ class SheetTest {
     }
 
     @Test
+    fun everyApostropheAndSpaceSpellingIsTheSameDepartment() {
+        val list = listOf("O‘quv laboratoriyasi", "Klinik laboratoriya")
+        listOf("o'quv laboratoriyasi", "O´quv laboratoriyasi", "O‛quv laboratoriyasi", "Oʻquv laboratoriyasi", "O`quv  laboratoriyasi").forEach {
+            assertEquals(it, "O‘quv laboratoriyasi", matchDepartment(it, list))
+        }
+        // Word/Telegram’dan ko‘chirilgan bo‘linmaydigan bo‘shliq.
+        assertEquals("Klinik laboratoriya", matchDepartment("Klinik\u00A0laboratoriya", list))
+        assertEquals("Klinik laboratoriya", matchDepartment("klinik\u202Flab", list, prefix = true))
+        assertEquals("a b c", cleanName("\u00A0a\u202Fb\t c \n"))
+        assertTrue(sameDepartment("O´quv", "o‘quv"))
+    }
+
+    @Test
+    fun anAliasNeverBringsBackARenamedOrRemovedDefault() {
+        val renamed = listOf("Гистология кафедраси", "Biologiya", "Morfologiya")
+        assertEquals("Гистология кафедраси", matchDepartment("гистология", renamed, prefix = true))
+        assertEquals("Histology", matchDepartment("histology", renamed))
+        assertEquals("Biologiya", matchDepartment("biology", renamed))
+    }
+
+    @Test
+    fun rowsFromAnotherTableGetOneSpellingPerDepartment() {
+        val rows = listOf(
+            SheetRow(1, "A", department = "O'simliklar", createdAt = 1),
+            SheetRow(2, "B", department = "O‘simliklar", createdAt = 2),
+            SheetRow(3, "C", department = "KIMYO", createdAt = 3),
+            SheetRow(4, "D", department = "kimyo", createdAt = 4),
+            SheetRow(5, "E", department = "биология", createdAt = 5),
+            SheetRow(6, "F", department = "250", createdAt = 6),
+        )
+        val (consistent, list) = withDepartmentsInList(rows, DEFAULT_DEPARTMENTS)
+        assertEquals(listOf("O'simliklar", "O'simliklar", "KIMYO", "KIMYO", "Biologiya", "250"), consistent.map { it.department })
+        assertEquals(DEFAULT_DEPARTMENTS + listOf("O'simliklar", "KIMYO"), list)
+    }
+
+    @Test
     fun daysLeftText() {
         assertEquals("39", daysLeftText(39))
         assertEquals("0 (bugun)", daysLeftText(0))

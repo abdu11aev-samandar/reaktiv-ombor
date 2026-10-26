@@ -1036,12 +1036,16 @@ private fun DepartmentsDialog(state: SheetState, onClose: () -> Unit) {
     var renaming by remember { mutableStateOf<String?>(null) }
     var renameText by remember { mutableStateOf("") }
     var message by remember { mutableStateOf<Notice?>(null) }
+    // «Olib tashlash» ikki bosqichli: ikki marta bosilsa, pastdan ko‘tarilgan keyingi bo‘lim ham ketib qolmasin.
+    var confirming by remember { mutableStateOf<String?>(null) }
 
     fun show(change: SheetState.Change) {
         message = change.message.ifEmpty { null }?.let { Notice(it, isError = !change.ok) }
     }
 
     fun add() {
+        // Qo‘shilgandan keyin bo‘sh maydonda yana Enter — «qo‘shildi» xabari xato bilan almashmasin.
+        if (newName.isBlank()) return
         val change = state.addDepartment(newName)
         show(change)
         if (change.ok) newName = ""
@@ -1087,8 +1091,23 @@ private fun DepartmentsDialog(state: SheetState, onClose: () -> Unit) {
                                     modifier = Modifier.weight(1f),
                                 )
                                 Text(if (used > 0) "$used ta qator" else "ishlatilmagan", fontSize = 12.sp, color = SheetColors.Muted)
-                                TextButton(onClick = { renaming = name; renameText = name; message = null }) { Text("Nomini o‘zgartirish") }
-                                TextButton(onClick = { show(state.removeDepartment(name)) }) { Text("Olib tashlash") }
+                                TextButton(onClick = { renaming = name; renameText = name; confirming = null; message = null }) { Text("Nomini o‘zgartirish") }
+                                if (confirming == name) {
+                                    TextButton(onClick = { confirming = null; show(state.removeDepartment(name)) }) {
+                                        Text("Ha, olib tashlash", color = SheetColors.Error)
+                                    }
+                                } else {
+                                    TextButton(onClick = {
+                                        // Yozilgan bo‘lim olib tashlanmaydi — sababi darrov aytiladi.
+                                        if (used > 0) {
+                                            confirming = null
+                                            show(state.removeDepartment(name))
+                                        } else {
+                                            confirming = name
+                                            message = null
+                                        }
+                                    }) { Text("Olib tashlash") }
+                                }
                             }
                         }
                         HorizontalDivider(color = SheetColors.Grid)

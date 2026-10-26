@@ -13,12 +13,18 @@ class SheetState(
     initialDepartments: List<String> = DEFAULT_DEPARTMENTS,
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
-    var rows: List<SheetRow> by mutableStateOf(inList(initial, withUsedDepartments(initialDepartments, emptyList())))
+    var rows: List<SheetRow> by mutableStateOf(emptyList())
         private set
 
     /** «Bo‘lim» ustunida tanlanadigan bo‘limlar. Jadvalda yozilgan har bir bo‘lim shu ro‘yxatda bo‘ladi. */
-    var departments: List<String> by mutableStateOf(withUsedDepartments(initialDepartments, rows))
+    var departments: List<String> by mutableStateOf(emptyList())
         private set
+
+    init {
+        val (opened, list) = withDepartmentsInList(initial, initialDepartments)
+        rows = opened
+        departments = list
+    }
 
     /** Har o‘zgarishda oshadi — avtomatik saqlash shunga qaraydi. */
     var revision: Int by mutableStateOf(0)
@@ -74,23 +80,13 @@ class SheetState(
     fun newRow(): SheetRow = SheetRow(id = nextId++, createdAt = stamp())
 
     /**
-     * Bo‘lim katagiga yoziladigan qiymat: ro‘yxatdagi nom ("biologiya" → "Biologiya"). Yangi nom [list] oxiriga
-     * qo‘shiladi; harfsiz qiymat (adashib qo‘yilgan son) qo‘shilmaydi — katakda xato bo‘lib ko‘rinadi.
-     */
-    private fun department(raw: String, list: MutableList<String>): String {
-        val name = matchDepartment(raw, list)
-        if (isDepartmentName(name) && list.none { sameDepartment(it, name) }) list += name
-        return name
-    }
-
-    /**
      * Katakni o‘zgartiradi. [id] null bo‘lsa — oxiriga yangi qator qo‘shiladi; uning id’si qaytariladi.
      * Bo‘limlar ro‘yxatida yo‘q bo‘lim yozilsa, u ro‘yxatga qo‘shiladi (Ctrl+Z ikkalasini birga bekor qiladi).
      */
     fun setCell(id: Long?, col: Col, value: String): Long? {
         if (!col.editable) return id
         val list = departments.toMutableList()
-        val stored = if (col == Col.DEPARTMENT) department(value, list) else value
+        val stored = if (col == Col.DEPARTMENT) resolveDepartment(value, list) else value
         if (id == null) {
             if (stored.isBlank()) return null
             val row = newRow().with(col, stored)
@@ -106,9 +102,8 @@ class SheetState(
     /** Fayldagi jadval: qatorlar va o‘sha faylning bo‘limlar ro‘yxati. */
     fun replaceAll(newRows: List<SheetRow>, newDepartments: List<String> = DEFAULT_DEPARTMENTS) {
         newRows.maxOfOrNull { it.createdAt }?.let { lastCreated = maxOf(lastCreated, it) }
-        val list = withUsedDepartments(newDepartments, emptyList())
-        val canonical = inList(newRows, list)
-        commit(canonical.map { it.copy(id = nextId++) }, withUsedDepartments(list, canonical))
+        val (opened, list) = withDepartmentsInList(newRows, newDepartments)
+        commit(opened.map { it.copy(id = nextId++) }, list)
     }
 
     /**
@@ -116,9 +111,8 @@ class SheetState(
      * Ularning bo‘limlari (va fayldagi ro‘yxat, [newDepartments]) bu jadval ro‘yxatiga qo‘shiladi.
      */
     fun appendAll(newRows: List<SheetRow>, newDepartments: List<String> = emptyList()) {
-        val list = withUsedDepartments(departments + newDepartments, emptyList())
-        val added = inList(newRows, list).map { it.copy(id = nextId++, createdAt = stamp()) }
-        commit(rows + added, withUsedDepartments(list, added))
+        val (added, list) = withDepartmentsInList(newRows, departments + newDepartments)
+        commit(rows + added.map { it.copy(id = nextId++, createdAt = stamp()) }, list)
     }
 
     private fun SheetRow.isIn(name: String) = department.isNotBlank() && sameDepartment(department, name)
@@ -148,7 +142,7 @@ class SheetState(
      */
     fun renameDepartment(old: String, raw: String): Change {
         if (old !in departments) return Change(false, "«$old» ro‘yxatda yo‘q.")
-        val text = raw.trim().replace(Regex("""\s+"""), " ")
+        val text = cleanName(raw)
         if (text.isEmpty()) return Change(false, "Bo‘lim nomini yozing.")
         val used = usage(old)
         val other = departments.firstOrNull { it != old && sameDepartment(it, text) }
@@ -213,7 +207,7 @@ class SheetState(
                     val value = raw.trim()
                     val stored = when {
                         monthFirst && isDate(col) -> DateText.fromMonthFirst(value)
-                        col == Col.DEPARTMENT -> department(value, list)
+                        col == Col.DEPARTMENT -> resolveDepartment(value, list)
                         else -> value
                     }
                     row = row.with(col, stored)
@@ -237,12 +231,6 @@ class SheetState(
     private companion object {
         const val HISTORY = 200
     }
-}
-
-/** Qatorlardagi bo‘limni ro‘yxatdagi yozilishiga keltiradi ("biologiya" → "Biologiya", yangisi — "kimyo" → "Kimyo"). */
-private fun inList(rows: List<SheetRow>, list: List<String>): List<SheetRow> = rows.map { row ->
-    val name = matchDepartment(row.department, list)
-    if (name == row.department) row else row.copy(department = name)
 }
 
 /** Nusxa (Windows/Mac/Linux qator oxirlari bilan) → qatorlar va kataklar. */

@@ -244,6 +244,32 @@ fun SheetGrid(
     }
 }
 
+/**
+ * Birlik yoki bo‘lim katagida ochiladigan ro‘yxat. Tepadagi band — Enter yozadigan qiymat: bo‘limda aynan mosi,
+ * ruscha/inglizcha nomi yoki boshi mos birinchisi; mos bo‘lim bo‘lmasa — «+ yangi bo‘lim» ([newFirst]).
+ * [newDepartment] — yozilgan nomni aynan shunday yangi bo‘lim qilish (masalan, «Mor», «Morfologiya» bor bo‘lsa ham).
+ */
+data class ChoiceMenu(val items: List<String>, val newDepartment: String?, val newFirst: Boolean)
+
+fun choiceMenu(col: Col, typedRaw: String, current: String?, departments: List<String>): ChoiceMenu {
+    val choices = if (col == Col.DEPARTMENT) departments else col.choices
+    val typedText = cleanName(typedRaw)
+    val typed = searchKey(typedText)
+    // F2 / ikki marta bosilganda (matn — hozirgi qiymat) hammasi; yozilganda — mos keladiganlari.
+    if (typed.isEmpty() || typed == current?.let { searchKey(cleanName(it)) }) return ChoiceMenu(choices, null, newFirst = false)
+    val matching = choices.filter { searchKey(cleanName(it)).startsWith(typed) }
+    if (col != Col.DEPARTMENT) return ChoiceMenu(matching.sortedBy { searchKey(it) != typed }.ifEmpty { choices }, null, newFirst = false)
+
+    val enter = matchDepartment(typedText, departments, prefix = true)
+    val created = matchDepartment(typedText, departments).takeIf { name -> isDepartmentName(name) && departments.none { sameDepartment(it, name) } }
+    return when {
+        enter in departments -> ChoiceMenu(listOf(enter) + matching.filter { it != enter }, created, newFirst = false)
+        created != null -> ChoiceMenu(emptyList(), created, newFirst = true)
+        // Harfsiz qiymat (son) bo‘lim bo‘lmaydi — tanlash uchun butun ro‘yxat.
+        else -> ChoiceMenu(choices, null, newFirst = false)
+    }
+}
+
 /** Nomdan keyingi ustunlar — ular gorizontal aylanadi (nom va qator raqami joyida qoladi). */
 private val SCROLLED_COLS = Col.entries.filter { it != Col.NAME }
 
@@ -498,40 +524,30 @@ private fun DataCell(
                         .border(2.dp, SheetColors.Accent)
                         .then(if (editing) Modifier else Modifier.pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent() } }),
                 )
-                val choices = if (col == Col.DEPARTMENT) departments else col.choices
-                // F2 / ikki marta bosilganda (matn — hozirgi qiymat) hammasi; yozilganda — mos keladiganlari (aynan mosi tepada).
-                val typedText = editValue.text.trim()
-                val typed = searchKey(typedText)
-                val filtering = typed.isNotEmpty() && typed != row?.get(col)?.let(::searchKey)
-                val matching = if (filtering) choices.filter { searchKey(it).startsWith(typed) }.sortedBy { searchKey(it) != typed } else choices
-                // Bo‘lim: ro‘yxatda yo‘q nom — yangi bo‘lim qilib qo‘shish (mos bo‘lim bo‘lmasa, Enter ham shuni qiladi).
-                val newDepartment = if (col == Col.DEPARTMENT && filtering) {
-                    matchDepartment(typedText, departments).takeIf { name -> isDepartmentName(name) && departments.none { sameDepartment(it, name) } }
-                } else {
-                    null
-                }
-                val options = matching.ifEmpty { if (newDepartment == null) choices else emptyList() }
-                if (col.kind == Col.Kind.CHOICE && editing && (options.isNotEmpty() || newDepartment != null)) {
-                    DropdownMenu(
-                        expanded = true,
-                        onDismissRequest = {},
-                        offset = DpOffset(0.dp, 2.dp),
-                        properties = PopupProperties(focusable = false),
-                    ) {
-                        val addItem: @Composable () -> Unit = {
-                            newDepartment?.let { name ->
-                                DropdownMenuItem(
-                                    text = { Text("+ «$name» — yangi bo‘lim", color = SheetColors.Accent) },
-                                    onClick = { onPick(name) },
-                                    modifier = Modifier.testTag("new-department"),
-                                )
+                if (col.kind == Col.Kind.CHOICE && editing) {
+                    val menu = choiceMenu(col, editValue.text, row?.get(col), departments)
+                    if (menu.items.isNotEmpty() || menu.newDepartment != null) {
+                        DropdownMenu(
+                            expanded = true,
+                            onDismissRequest = {},
+                            offset = DpOffset(0.dp, 2.dp),
+                            properties = PopupProperties(focusable = false),
+                        ) {
+                            val addItem: @Composable () -> Unit = {
+                                menu.newDepartment?.let { name ->
+                                    DropdownMenuItem(
+                                        text = { Text("+ «$name» — yangi bo‘lim", color = SheetColors.Accent) },
+                                        onClick = { onPick(name) },
+                                        modifier = Modifier.testTag("new-department"),
+                                    )
+                                }
                             }
+                            if (menu.newFirst) addItem()
+                            menu.items.forEach { choice ->
+                                DropdownMenuItem(text = { Text(choice) }, onClick = { onPick(choice) })
+                            }
+                            if (!menu.newFirst) addItem()
                         }
-                        if (matching.isEmpty()) addItem()
-                        options.forEach { choice ->
-                            DropdownMenuItem(text = { Text(choice) }, onClick = { onPick(choice) })
-                        }
-                        if (matching.isNotEmpty()) addItem()
                     }
                 }
             }

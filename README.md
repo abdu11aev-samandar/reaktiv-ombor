@@ -127,6 +127,7 @@ Ustunlar (laboratoriyadagi qog‘oz jadval tartibida): **Reaktiv nomi · Ishlab 
 - **Qoldiq** = Ombordagi miqdor − Berilgan miqdor, **Qolgan muddat** = yaroqlilik muddatigacha qolgan kunlar — ikkalasini dastur o‘zi hisoblaydi (ularga yozilmaydi)
 - Bo‘lim va berilgan miqdor ixtiyoriy, lekin birga yoziladi; berilgan miqdor ombordagidan ko‘p bo‘lishi mumkin emas. Bo‘lim ro‘yxatdan tanlanadi, boshi yetadi (g → Gistologiya)
 - **Bo‘limlar ro‘yxati o‘zgaradi**: katakka ro‘yxatda yo‘q nom yozilsa (masalan, «Kimyo»), u ro‘yxatga qo‘shiladi. **Bo‘limlar** tugmasi — bo‘lim qo‘shish, nomini o‘zgartirish (qatorlarda ham; boshqa bo‘lim nomi berilsa — ikkalasi birlashadi) va yozilmagan bo‘limni olib tashlash. Hammasi Ctrl+Z bilan bekor qilinadi, ro‘yxat jadval bilan birga saqlanadi
+- 1.0.7 dan boshlab bir kompyuterdagi hamma nusxalarni yangilang (eski portable nusxani o‘chiring): 1.0.6 va undan eski dastur bo‘limlar ro‘yxatini bilmaydi — o‘zi saqlaganda ro‘yxatdagi ishlatilmagan bo‘limlar tushib qoladi, «Bio», «Mor» kabi nomlarni esa «Biologiya», «Morfologiya» deb o‘qiydi
 - Muddati 3 oydan ko‘p — nomi yashil, 1–3 oy — sariq, 1 oydan kam (yoki o‘tgan) — nomi va **butun qator qizil**
 
 - Kataklarga to‘g‘ridan-to‘g‘ri yoziladi (Excel’dagi kabi): **Enter** — keyingi qator (Tab bilan yurilgan bo‘lsa — qator boshidagi ustunga), **Tab** — o‘ngga, strelkalar — yurish, **F2** yoki ikki marta bosish — katakni tahrirlash (yozib turganda F2 yoki katak ichiga bosish — strelkalar matn ichida yuradi), **Esc** — bekor qilish, **Delete** — katakni tozalash

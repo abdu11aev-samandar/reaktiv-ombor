@@ -91,17 +91,26 @@ private val UNIT_ALIASES = mapOf(
     "мл" to "ml", "кг" to "kg", "л" to "l", "litr" to "l", "дона" to "dona", "ta" to "dona", "шт" to "dona",
 )
 
-/** Qidiruv va bo‘lim nomlari: katta-kichik harf va o‘ / o' / o’ farqlanmaydi. */
-fun searchKey(value: String): String = value.replace(Regex("['`’ʻʼ]"), "‘").lowercase()
+/** Qidiruv va bo‘lim nomlari: katta-kichik harf va o‘ / o' / o’ / o´ (tutuq belgisining hamma ko‘rinishi) farqlanmaydi. */
+fun searchKey(value: String): String = value.replace(APOSTROPHES, "‘").lowercase()
+
+private val APOSTROPHES = Regex("""['`´‘’‛ʹʻʼʽ′]""")
+
+/** Nom chetidagi bo‘shliqlarsiz, ichidagi har qanday bo‘shliq (Word/Telegram’dagi bo‘linmaydigani ham) — bitta oddiy bo‘shliq. */
+fun cleanName(raw: String): String = raw.replace(SPACES, " ").trim()
+
+private val SPACES = Regex("""[\s\p{Z}]+""")
+
+private fun departmentKey(name: String): String = searchKey(cleanName(name))
 
 /** Bo‘lim nomi harf bilan yoziladi — adashib bu ustunga qo‘yilgan son yoki sana yangi bo‘lim bo‘lib qolmasin. */
 fun isDepartmentName(name: String): Boolean {
-    val text = name.trim()
+    val text = cleanName(name)
     return text.any { it.isLetter() } && text.codePointCount(0, text.length) <= DEPARTMENT_MAX
 }
 
-/** Bitta bo‘limmi: katta-kichik harf va o‘ / o' / o’ farqlanmaydi. */
-fun sameDepartment(a: String, b: String): Boolean = searchKey(a.trim()) == searchKey(b.trim())
+/** Bitta bo‘limmi: katta-kichik harf, tutuq belgisi va bo‘shliqlar farqlanmaydi. */
+fun sameDepartment(a: String, b: String): Boolean = departmentKey(a) == departmentKey(b)
 
 /**
  * Yozilgan nomni ro‘yxatdagi bo‘limga keltiradi: "biologiya", "Биология" → "Biologiya". [prefix] bo‘lsa boshi ham
@@ -109,12 +118,13 @@ fun sameDepartment(a: String, b: String): Boolean = searchKey(a.trim()) == searc
  * Ro‘yxatda yo‘q nom — yangi bo‘lim: bosh harfi katta, ortiqcha bo‘shliqlarsiz.
  */
 fun matchDepartment(raw: String, departments: List<String>, prefix: Boolean = false): String {
-    val text = raw.trim().replace(SPACES, " ")
+    val text = cleanName(raw)
     if (text.isEmpty()) return ""
     val key = searchKey(text)
-    departments.firstOrNull { searchKey(it) == key }?.let { return it }
-    DEPARTMENT_ALIASES[key]?.let { name -> return departments.firstOrNull { sameDepartment(it, name) } ?: name }
-    if (prefix) departments.firstOrNull { searchKey(it).startsWith(key) }?.let { return it }
+    departments.firstOrNull { departmentKey(it) == key }?.let { return it }
+    // Ruscha/inglizcha nom — faqat o‘sha bo‘lim ro‘yxatda bo‘lsa: nomi o‘zgartirilgan yoki olib tashlangan bo‘lim qaytib kelmasin.
+    DEPARTMENT_ALIASES[key]?.let { name -> departments.firstOrNull { sameDepartment(it, name) }?.let { return it } }
+    if (prefix) departments.firstOrNull { departmentKey(it).startsWith(key) }?.let { return it }
     return text.replaceFirstChar { it.titlecase() }
 }
 
@@ -122,13 +132,35 @@ fun matchDepartment(raw: String, departments: List<String>, prefix: Boolean = fa
 fun withUsedDepartments(departments: List<String>, rows: List<SheetRow>): List<String> {
     val result = mutableListOf<String>()
     (departments + rows.map { it.department }).forEach { raw ->
-        val name = raw.trim().replace(SPACES, " ")
+        val name = cleanName(raw)
         if (isDepartmentName(name) && result.none { sameDepartment(it, name) }) result += name
     }
     return result
 }
 
-private val SPACES = Regex("""\s+""")
+/**
+ * Bo‘lim katagiga yoziladigan qiymat: ro‘yxatdagi nom ("biologiya" → "Biologiya"). Yangi nom [list] oxiriga
+ * qo‘shiladi; harfsiz qiymat (adashib qo‘yilgan son) qo‘shilmaydi — katakda xato bo‘lib ko‘rinadi.
+ */
+fun resolveDepartment(raw: String, list: MutableList<String>): String {
+    val name = matchDepartment(raw, list)
+    if (isDepartmentName(name) && list.none { sameDepartment(it, name) }) list += name
+    return name
+}
+
+/**
+ * Fayldan yoki boshqa jadvaldan kelgan qatorlar: bo‘limi ro‘yxatdagi yozilishiga keltiriladi, yangi nom ro‘yxatga
+ * qo‘shiladi va keyingi qatorlardagi xuddi shu nom unga keltiriladi ("Kimyo" va "KIMYO" — bitta bo‘lim).
+ * Qatorlar va kengaygan ro‘yxat qaytadi.
+ */
+fun withDepartmentsInList(rows: List<SheetRow>, departments: List<String>): Pair<List<SheetRow>, List<String>> {
+    val list = withUsedDepartments(departments, emptyList()).toMutableList()
+    val result = rows.map { row ->
+        val name = resolveDepartment(row.department, list)
+        if (name == row.department) row else row.copy(department = name)
+    }
+    return result to list
+}
 
 const val DEPARTMENT_NAME_ERROR = "Bo‘lim nomi harf bilan yozilishi kerak ($DEPARTMENT_MAX belgigacha)."
 

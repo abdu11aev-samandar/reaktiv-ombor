@@ -22,6 +22,8 @@ import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.doubleClick
+import androidx.compose.ui.test.click
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.pressKey
 import androidx.compose.ui.test.runComposeUiTest
 import androidx.compose.ui.test.runDesktopComposeUiTest
@@ -444,6 +446,9 @@ class AppUiTest {
         onNodeWithText("1 ta qatorda yozilgan", substring = true).assertExists()
         onAllNodesWithText("Olib tashlash")[3].performClick()
         waitForIdle()
+        assertEquals(4, state.departments.size) // avval so‘raladi
+        onNodeWithText("Ha, olib tashlash").performClick()
+        waitForIdle()
         assertEquals(listOf("Gistologiya", "Mikrobiologiya", "Morfologiya"), state.departments)
         screenshot("06-bolimlar")
 
@@ -453,6 +458,36 @@ class AppUiTest {
         onNodeWithTag("cell-editor").performKeyInput { keyDown(Key.CtrlLeft); pressKey(Key.Z); keyUp(Key.CtrlLeft) }
         waitForIdle()
         assertEquals(listOf("Gistologiya", "Mikrobiologiya", "Morfologiya", "Kimyo"), state.departments)
+    }
+
+    @Test
+    fun aDoubleClickOnRemoveRemovesOnlyOneDepartment() = runComposeUiTest {
+        val state = SheetState(SheetStore.fromJson(SAMPLE))
+        app(state)
+        onNodeWithText("Bo‘limlar").performClick()
+        // Birinchi qatordagi tugma joyiga uch marta bosiladi (ikki marta bosish va yana bir marta).
+        val spot = onAllNodesWithText("Olib tashlash")[0].getBoundsInRoot()
+        repeat(3) {
+            onAllNodes(isRoot()).onLast().performTouchInput { click(Offset(((spot.left + spot.right) / 2).toPx(), ((spot.top + spot.bottom) / 2).toPx())) }
+            waitForIdle()
+        }
+        // Gistologiya olib tashlandi; uning o‘rniga ko‘tarilgan Biologiya faqat so‘raldi.
+        assertEquals(listOf("Biologiya", "Morfologiya"), state.departments)
+        onNodeWithText("Ha, olib tashlash").assertExists()
+        screenshot("08-tasdiqlash")
+    }
+
+    @Test
+    fun enterInTheEmptyNameFieldKeepsTheAddedMessage() = runComposeUiTest {
+        val state = SheetState(SheetStore.fromJson(SAMPLE))
+        app(state)
+        onNodeWithText("Bo‘limlar").performClick()
+        onNodeWithTag("department-new").performTextInput("Kimyo")
+        onNodeWithTag("department-new").key(Key.Enter)
+        onNodeWithTag("department-new").key(Key.Enter) // ikkinchi Enter — maydon bo‘sh
+        waitForIdle()
+        onNodeWithText("«Kimyo» qo‘shildi.").assertExists()
+        assertEquals(DEFAULT_DEPARTMENTS + "Kimyo", state.departments)
     }
 
     @Test

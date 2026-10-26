@@ -195,10 +195,11 @@ class SheetStore(val file: Path) {
                 .mapIndexed { index, item ->
                     val createdAt = if (item.value.createdAt > last) item.value.createdAt else last + 1
                     last = createdAt
-                    // "biologiya" → ro‘yxatdagi «Biologiya»; ro‘yxatda yo‘q nom ro‘yxatga qo‘shiladi (allDepartments).
-                    item.value.copy(id = index + 1L, createdAt = createdAt, department = matchDepartment(item.value.department, known))
+                    item.value.copy(id = index + 1L, createdAt = createdAt)
                 }
-            return Parsed(ordered, skipped, migrated = version < 2, departments = listed)
+            // "biologiya" → ro‘yxatdagi «Biologiya»; ro‘yxatda yo‘q nom bir xil yoziladi ("KIMYO", "Kimyo" → bitta).
+            val (consistent, _) = withDepartmentsInList(ordered, known)
+            return Parsed(consistent, skipped, migrated = version < 2, departments = listed)
         }
 
         /** Fayldagi bo‘limlar ro‘yxati (1.0.7 dan). Yo‘q yoki buzuq bo‘lsa — null. */
@@ -225,7 +226,7 @@ class SheetStore(val file: Path) {
                     unit = normalizeUnit(item.optString("unit", "g")),
                     expiresAt = displayDate(item.optString("expiresAt")),
                     stockAmount = inputAmount(item.optString("stockAmount")),
-                    department = item.optString("department").trim(),
+                    department = cleanName(item.optString("department")),
                     issuedAmount = inputAmount(item.optString("issuedAmount")),
                     createdAt = item.optLong("createdAt", 0L),
                     legacyReceivedAt = displayDate(item.optString("receivedAt")),
