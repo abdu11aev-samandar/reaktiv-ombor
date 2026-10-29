@@ -115,7 +115,8 @@ const val APP_SUBTITLE = "Forensic Laboratory Management System"
 /**
  * Dastur ramkasi: tepada nom, sana va bildirishnomalar, chapda 13 bo‘limli navigatsiya, o‘rtada [content].
  * Bildirishnoma bosilsa [onNotificationClick] (standarti — uning sahifasiga o‘tish).
- * [AppTheme] ichida chaqiriladi.
+ * [badgeCount] — qo‘ng‘iroqcha ustidagi son (standarti — hamma bildirishnomalar; dasturda: muddati o‘tgan + qizil +
+ * minimal qoldiqdan kam, sariqlar ro‘yxatda bor, lekin sanalmaydi). [AppTheme] ichida chaqiriladi.
  */
 @Composable
 fun AppShell(
@@ -125,10 +126,11 @@ fun AppShell(
     onNotificationClick: (ShellNotification) -> Unit = { onNavigate(it.page) },
     today: LocalDate,
     modifier: Modifier = Modifier,
+    badgeCount: Int = notifications.size,
     content: @Composable () -> Unit,
 ) {
     Column(modifier.fillMaxSize().background(AppColors.Background)) {
-        TopBar(today, notifications, onNotificationClick)
+        TopBar(today, notifications, badgeCount, onNotificationClick)
         Row(Modifier.fillMaxWidth().weight(1f)) {
             NavRail(current, onNavigate)
             Box(Modifier.weight(1f).fillMaxHeight().testTag("page-content")) { content() }
@@ -140,7 +142,7 @@ private val RailWidth = 228.dp
 private val TopBarHeight = 56.dp
 
 @Composable
-private fun TopBar(today: LocalDate, notifications: List<ShellNotification>, onNotificationClick: (ShellNotification) -> Unit) {
+private fun TopBar(today: LocalDate, notifications: List<ShellNotification>, badgeCount: Int, onNotificationClick: (ShellNotification) -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
@@ -176,14 +178,13 @@ private fun TopBar(today: LocalDate, notifications: List<ShellNotification>, onN
         Spacer(Modifier.width(16.dp))
         Box(Modifier.width(1.dp).height(28.dp).background(AppColors.Divider))
         Spacer(Modifier.width(8.dp))
-        NotificationBell(notifications, onNotificationClick)
+        NotificationBell(notifications, badgeCount, onNotificationClick)
     }
 }
 
 @Composable
-private fun NotificationBell(notifications: List<ShellNotification>, onClick: (ShellNotification) -> Unit) {
+private fun NotificationBell(notifications: List<ShellNotification>, count: Int, onClick: (ShellNotification) -> Unit) {
     var open by remember { mutableStateOf(false) }
-    val count = notifications.size
     Box {
         Box(
             Modifier
@@ -227,7 +228,7 @@ private fun NotificationBell(notifications: List<ShellNotification>, onClick: (S
         ) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("Bildirishnomalar", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = AppColors.Text, modifier = Modifier.weight(1f))
-                if (count > 0) Text("$count ta", fontSize = 12.sp, color = AppColors.Muted)
+                if (notifications.isNotEmpty()) Text("${notifications.size} ta", fontSize = 12.sp, color = AppColors.Muted)
             }
             HorizontalDivider(color = AppColors.Divider)
             if (notifications.isEmpty()) {

@@ -11,62 +11,115 @@ import androidx.compose.ui.window.WindowPlacement
 import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
+import kotlinx.coroutines.delay
+import uz.reaktivombor.desktop.core.AppLogging
+import uz.reaktivombor.desktop.core.DataDir
+import uz.reaktivombor.desktop.core.UserError
+import uz.reaktivombor.desktop.service.LegacyResult
+import uz.reaktivombor.desktop.service.Services
+import uz.reaktivombor.desktop.ui.APP_NAME
+import uz.reaktivombor.desktop.ui.APP_SUBTITLE
+import uz.reaktivombor.desktop.ui.AppState
+import uz.reaktivombor.desktop.ui.FileDialogs
+import uz.reaktivombor.desktop.ui.ReaktivControlApp
+import uz.reaktivombor.desktop.ui.theme.Severity
 import java.awt.Desktop
 import java.awt.Dimension
-import java.awt.EventQueue
 import java.awt.FileDialog
 import java.awt.Frame
 import java.awt.GraphicsEnvironment
+import java.io.File
 import java.nio.channels.FileChannel
 import java.nio.channels.FileLock
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
 import java.nio.file.StandardOpenOption
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
+import java.util.logging.Level
+import java.util.logging.Logger
 import javax.swing.JOptionPane
+import javax.swing.SwingUtilities
+import kotlin.system.exitProcess
 
-/** Ikkita oyna bitta faylga yozib, bir-birini o‘chirib yubormasligi uchun. */
+private const val WINDOW_TITLE = "$APP_NAME — $APP_SUBTITLE"
+private const val DEFAULT_WIDTH = 1366
+private const val DEFAULT_HEIGHT = 768
+private const val MIN_WIDTH = 1280
+private const val MIN_HEIGHT = 720
+
+private val log: Logger = Logger.getLogger("uz.reaktivombor.Main")
+
+/** Ikkinchi nusxa bitta bazaga yozmasligi uchun (ma’lumotlar papkasidagi .lock). */
 private var instanceLock: FileLock? = null
 
-fun main() {
-    val store = SheetStore(SheetStore.defaultFile())
-    Files.createDirectories(store.file.parent)
+fun main(args: Array<String>) {
+    // ---- SELF-TEST: bosh muhandis shu yerga "--self-test <fayl>" tarmog‘ini qo‘shadi (UI va qulfdan oldin). ----
 
-    instanceLock = acquireLock(store.file.resolveSibling(".reaktivlar.lock"))
+    val dataDir = DataDir.default()
+    try {
+        Files.createDirectories(dataDir)
+    } catch (e: Exception) {
+        fatal("Ma’lumotlar papkasini yaratib bo‘lmadi:\n$dataDir\n\n${e.message ?: e}")
+    }
+
+    instanceLock = acquireLock(DataDir.lockFile(dataDir))
     if (instanceLock == null) {
-        JOptionPane.showMessageDialog(null, "«Reaktivlar» dasturi allaqachon ochiq.", "Reaktivlar hisobi", JOptionPane.INFORMATION_MESSAGE)
+        JOptionPane.showMessageDialog(
+            null,
+            "«$APP_NAME» dasturi allaqachon ochiq.\nIkkinchi nusxani ochib bo‘lmaydi — ochiq oynadan foydalaning.",
+            APP_NAME,
+            JOptionPane.INFORMATION_MESSAGE,
+        )
         return
     }
 
-    val loaded = store.load()
-    val state = SheetState(loaded.rows, loaded.departments)
+    // Jurnal yozilmasa ham dastur ishlayveradi (masalan, papka faqat o‘qish uchun).
+    runCatching { AppLogging.setup(dataDir) }.onFailure { System.err.println("Jurnalni yoqib bo‘lmadi: ${it.message}") }
+    AppLogging.installUncaughtHandler { _, _ -> showErrorLater(AppLogging.GENERIC_ERROR) }
+    log.info("start, data dir=$dataDir")
 
-    // Windows o‘chirilganda, qayta yuklanganda, foydalanuvchi chiqqanda yoki yangi MSI dasturni yopganda oynaga
-    // “yopilish” xabari kelmaydi: AWT buni SIGTERM qiladi va faqat shutdown hook’lar ishlaydi. Yozib turilgan katak ham saqlansin.
-    Runtime.getRuntime().addShutdownHook(Thread {
-        runCatching {
-            val flushed = CountDownLatch(1)
-            EventQueue.invokeLater {
-                runCatching { state.flushPendingEdit() }
-                flushed.countDown()
-            }
-            // Chegaralangan kutish: dastur qotib qolgan bo‘lsa ham Windows’ning o‘chishini to‘xtatmaymiz.
-            flushed.await(2, TimeUnit.SECONDS)
-            store.save(state.rows, state.revision, state.departments)
+    val services = try {
+        Services.open(dataDir)
+    } catch (e: UserError) {
+        log.log(Level.WARNING, "database refused", e)
+        fatal(e.message)
+    } catch (e: Exception) {
+        log.log(Level.SEVERE, "database open failed", e)
+        fatal("Ma’lumotlar bazasini ochib bo‘lmadi:\n${DataDir.dbFile(dataDir)}\n\nTafsilotlar jurnal faylida (logs papkasi).")
+    }
+
+    // Eski jadvaldan bir martalik ko‘chirish — oyna ochilishidan oldin (ma’lumot darhol ko‘rinsin).
+    val legacy: LegacyResult? = try {
+        services.legacy.autoImportIfNeeded()
+    } catch (e: Exception) {
+        log.log(Level.WARNING, "legacy import failed", e)
+        LegacyResult(0, 0, listOf("Eski ma’lumotlarni ko‘chirib bo‘lmadi (tafsiloti jurnalda)."))
+    }
+
+    // Kunlik avtomatik zaxira — fonda; xato bo‘lsa faqat jurnalga yoziladi.
+    Thread({
+        try {
+            services.backup.autoBackupIfDue(services.today())?.let { log.info("auto backup: ${it.fileName}") }
+        } catch (e: Exception) {
+            log.log(Level.WARNING, "auto backup failed", e)
         }
-    })
+    }, "auto-backup").apply { isDaemon = true }.start()
 
-    // Vazifalar paneli chiqarib tashlangan ekran maydoni. Oyna undan katta bo‘lsa, sarlavhasi ekrandan chiqib ketadi.
+    val dialogs = AwtFileDialogs()
+    val state = AppState(services, dialogs)
+    legacy?.let { showLegacyResult(state, it) }
+
+    // Windows o‘chirilganda oyna yopilish xabarini olmaydi — baza baribir to‘g‘ri yopilsin.
+    Runtime.getRuntime().addShutdownHook(Thread { closeServices(services) })
+
     val screen = GraphicsEnvironment.getLocalGraphicsEnvironment().maximumWindowBounds
-    val fits = screen.width >= WIDTH && screen.height >= HEIGHT
+    val fits = screen.width >= DEFAULT_WIDTH && screen.height >= DEFAULT_HEIGHT
 
     application {
         val windowState = rememberWindowState(
             placement = if (fits) WindowPlacement.Floating else WindowPlacement.Maximized,
-            width = minOf(WIDTH, screen.width).dp,
-            height = minOf(HEIGHT, screen.height).dp,
+            width = minOf(DEFAULT_WIDTH, screen.width).dp,
+            height = minOf(DEFAULT_HEIGHT, screen.height).dp,
             position = WindowPosition(Alignment.Center),
         )
         val icon = remember {
@@ -74,39 +127,65 @@ fun main() {
         }
         Window(
             onCloseRequest = {
-                // Katakda yozib turilgan (Enter bosilmagan) qiymat ham saqlansin.
-                state.flushPendingEdit()
-                val error = runCatching { store.save(state.rows, state.revision, state.departments) }.exceptionOrNull()
-                if (error == null || confirmCloseWithoutSaving(error)) exitApplication()
+                closeServices(services)
+                exitApplication()
             },
-            title = "Reaktivlar hisobi",
+            title = WINDOW_TITLE,
             icon = icon,
             state = windowState,
         ) {
-            LaunchedEffect(Unit) { window.minimumSize = Dimension(minOf(1000, screen.width), minOf(560, screen.height)) }
-            ReaktivlarApp(state, store, AwtFileDialogs(window), loaded.warning)
+            LaunchedEffect(Unit) {
+                dialogs.frame = window
+                window.minimumSize = Dimension(minOf(MIN_WIDTH, screen.width), minOf(MIN_HEIGHT, screen.height))
+            }
+            // Yarim tunda sana o‘zgarsa — holatlar va eslatmalar qayta hisoblanadi.
+            LaunchedEffect(Unit) {
+                var day = state.today()
+                while (true) {
+                    delay(60_000)
+                    val now = runCatching { state.today() }.getOrNull() ?: continue
+                    if (now != day) {
+                        day = now
+                        state.refresh()
+                    }
+                }
+            }
+            ReaktivControlApp(state)
         }
     }
 }
 
-private const val WIDTH = 1320
-private const val HEIGHT = 820
+/** Eski jadvaldan ko‘chirish natijasi — bir marta, xabar sifatida. */
+private fun showLegacyResult(state: AppState, result: LegacyResult) {
+    val notes = result.notes.take(3).joinToString(" ")
+    when {
+        result.imported > 0 -> state.showMessage(
+            "Eski jadvaldan ${result.imported} ta partiya ko‘chirildi" +
+                (if (result.skipped > 0) ", ${result.skipped} ta qator o‘tkazib yuborildi" else "") + ". " +
+                "Eski fayl o‘zgartirilmadi." + if (notes.isNotEmpty()) " $notes" else "",
+            severity = if (result.skipped > 0) Severity.WARNING else Severity.INFO,
+            title = "Eski ma’lumotlar ko‘chirildi",
+            autoHide = false,
+        )
+        notes.isNotEmpty() -> state.showMessage(notes, Severity.WARNING, title = "Eski ma’lumotlar", autoHide = false)
+    }
+}
 
-private fun confirmCloseWithoutSaving(error: Throwable): Boolean {
-    val options = arrayOf("Saqlamasdan yopish", "Ochiq qoldirish")
-    val answer = JOptionPane.showOptionDialog(
-        null,
-        "Ma’lumotlarni saqlab bo‘lmadi:\n${error.message ?: error}\n\n" +
-            "Hozir yopilsa, oxirgi o‘zgarishlar yo‘qoladi. Dasturni ochiq qoldirib,\n" +
-            "«Fayl» → «Zaxira nusxa saqlash…» orqali boshqa joyga (masalan, fleshkaga) saqlab olishingiz mumkin.",
-        "Reaktivlar hisobi",
-        JOptionPane.DEFAULT_OPTION,
-        JOptionPane.WARNING_MESSAGE,
-        null,
-        options,
-        options[1],
-    )
-    return answer == 0
+private fun closeServices(services: Services) {
+    runCatching { if (services.db.isOpen) services.db.close() }.onFailure { log.log(Level.WARNING, "db close failed", it) }
+    runCatching { instanceLock?.release() }
+}
+
+private fun fatal(message: String): Nothing {
+    runCatching { JOptionPane.showMessageDialog(null, message, APP_NAME, JOptionPane.ERROR_MESSAGE) }
+    runCatching { instanceLock?.release() }
+    exitProcess(1)
+}
+
+private fun showErrorLater(message: String) {
+    SwingUtilities.invokeLater {
+        runCatching { JOptionPane.showMessageDialog(null, message, APP_NAME, JOptionPane.ERROR_MESSAGE) }
+    }
 }
 
 private fun acquireLock(path: Path): FileLock? = runCatching {
@@ -117,24 +196,18 @@ private fun acquireLock(path: Path): FileLock? = runCatching {
     }
 }.getOrNull()
 
-/** Windows’ning o‘z fayl tanlash oynalari. */
-class AwtFileDialogs(private val frame: Frame) : FileDialogs {
-    override fun openJson(): Path? {
-        val dialog = FileDialog(frame, "Zaxira faylini tanlang (.json)", FileDialog.LOAD)
-        dialog.file = "*.json"
-        dialog.isVisible = true
-        return dialog.file?.let { Paths.get(dialog.directory, it) }
-    }
-
-    override fun saveFile(title: String, defaultName: String): Path? {
+/** Tizimning o‘z fayl tanlash oynalari (AWT FileDialog). [frame] oyna ochilgach beriladi. */
+class AwtFileDialogs(var frame: Frame? = null) : FileDialogs {
+    override fun save(title: String, defaultName: String, extension: String): Path? {
+        val ext = "." + extension.removePrefix(".")
         val dialog = FileDialog(frame, title, FileDialog.SAVE)
-        dialog.file = defaultName
+        dialog.file = if (defaultName.endsWith(ext, ignoreCase = true)) defaultName else defaultName + ext
         dialog.isVisible = true
         val name = dialog.file ?: return null
-        val ext = "." + defaultName.substringAfterLast('.')
-        if (name.endsWith(ext, ignoreCase = true)) return Paths.get(dialog.directory, name)
+        val directory = dialog.directory ?: return null
+        if (name.endsWith(ext, ignoreCase = true)) return Paths.get(directory, name)
         // Windows oynasi kengaytmani o‘zi qo‘shmaydi. Qo‘shilgan nom bilan fayl bo‘lsa — oyna buni so‘ramagan, biz so‘raymiz.
-        val path = Paths.get(dialog.directory, name + ext)
+        val path = Paths.get(directory, name + ext)
         if (Files.exists(path)) {
             val options = arrayOf("Ustidan yozish", "Bekor qilish")
             val answer = JOptionPane.showOptionDialog(
@@ -152,7 +225,24 @@ class AwtFileDialogs(private val frame: Frame) : FileDialogs {
         return path
     }
 
+    override fun open(title: String, extensions: List<String>): Path? {
+        val exts = extensions.map { it.removePrefix(".").lowercase() }
+        val dialog = FileDialog(frame, title, FileDialog.LOAD)
+        // Windows filtrni nom shablonidan oladi, boshqa tizimlar — filenameFilter’dan.
+        if (exts.isNotEmpty()) {
+            dialog.file = exts.joinToString(";") { "*.$it" }
+            dialog.filenameFilter = java.io.FilenameFilter { _: File, name: String -> exts.any { name.lowercase().endsWith(".$it") } }
+        }
+        dialog.isVisible = true
+        val name = dialog.file ?: return null
+        val directory = dialog.directory ?: return null
+        return Paths.get(directory, name)
+    }
+
     override fun openFolder(dir: Path) {
-        runCatching { Desktop.getDesktop().open(dir.toFile()) }
+        runCatching {
+            Files.createDirectories(dir)
+            Desktop.getDesktop().open(dir.toFile())
+        }.onFailure { log.log(Level.WARNING, "open folder failed: $dir", it) }
     }
 }
