@@ -59,7 +59,7 @@ desktop/src/main/kotlin/uz/reaktivombor/desktop/
     theme/Theme.kt             colors, typography, status colors
     components/                DataTable, DateField, DateRangeField, ComboField, SelectField, QtyField,
                                StatCard, Charts, StatusChip, Dialogs, FormLayout, Banner
-    pages/                     one file per page (see §6)
+    pages/                     one file per page (see §6) + Common.kt (shared page helpers, §6.1)
   selftest/SelfTest.kt         `--self-test <file>` scripted end-to-end check (used by Windows CI)
 desktop/src/main/resources/fonts/DejaVuSans.ttf, DejaVuSans-Bold.ttf, LICENSE-DejaVu.txt
 ```
@@ -429,6 +429,146 @@ Pages (ui/pages):
   automatic backups list (restore button), data/log folder paths with "Papkani ochish", import old JSON.
 - **SettingsPage**: organisation name (report headers), default staff name, auto-backup count, expiry thresholds shown
   read-only (90 / 30 / 0 days), reset all table layouts, about (version, data folder, DB file size).
+
+## 6.1 UI as built — AppState, PageIntent, pages/Common.kt (binding for page agents)
+
+Built in wave 2 (pages 1–3). Packages `uz.reaktivombor.desktop.ui` (App.kt, Shell.kt) and `…ui.pages`. Later page agents
+replace their stub file in `ui/pages/` **wholesale** (same function name `XxxPage(state: AppState)`), use the API below and
+do not edit App.kt / Common.kt (ask the lead if something is missing). The old spreadsheet UI (`App.kt`, `Grid.kt`,
+`SheetState.kt` in the root package + `AppUiTest`, `ChoiceMenuTest`, `SheetStateTest`) is removed.
+
+**Root and router** (`ui/App.kt`): `@Composable fun ReaktivControlApp(state: AppState)` = `AppTheme { AppShell { router } }`
++ bottom message host + «Kutilmagan xato» dialog. The router calls one composable per `Page` inside
+`key(state.navigation.serial)` — **every navigation recreates the page**, so a page reads its intent once in `remember`.
+Bell: `queries.notifications(today)` → `ShellNotification` (EXPIRED/RED → ERROR, BELOW_MIN/YELLOW → WARNING); badge =
+`count { it.counted }` (new `AppShell(badgeCount = …)` parameter); click → `navigate(EXPIRY, FilterExpiry(setOf(state), batchId))`
+or `navigate(STOCK, StockFiltered(reagentId, belowMinOnly = true))`.
+
+```kotlin
+interface FileDialogs {                       // Main.kt: AwtFileDialogs (AWT FileDialog); tests: FakeFileDialogs
+    fun save(title: String, defaultName: String, extension: String): Path?   // extension without dot; adds it if missing
+    fun open(title: String, extensions: List<String>): Path?
+    fun openFolder(dir: Path)
+}
+sealed interface PageIntent {
+    data class ReceiptFor(val batchId: Long)                    // RECEIPTS: extra-receipt form for this batch
+    data class IssueFrom(val batchId: Long)                     // ISSUES: first line preselected with this batch
+    data class HistoryOf(val batchId: Long? = null, val reagentId: Long? = null)   // HISTORY: ledger
+    data class EditBatch(val batchId: Long)                     // REAGENTS: opens the edit dialog (implemented)
+    data class FilterExpiry(val states: Set<ExpiryState>, val batchId: Long? = null)   // EXPIRY
+    data class ReagentsFiltered(val reagentId: Long? = null, val states: Set<ExpiryState> = emptySet(),
+                                val withStockOnly: Boolean = false)                    // REAGENTS (implemented)
+    data class StockFiltered(val reagentId: Long? = null, val belowMinOnly: Boolean = false)   // STOCK
+    data class DepartmentOf(val departmentId: Long)             // DEPARTMENTS
+    data class DistrictOf(val districtId: Long)                 // DISTRICTS
+}
+data class Navigation(val page: Page, val intent: PageIntent?, val serial: Long)
+class AppMessage(id: Long, text, severity: Severity, title: String?, actionLabel: String?, onAction: (() -> Unit)?,
+                 autoHide: Boolean, key: String?)
+data class UnexpectedError(val message: String, val details: String)
+class FormErrors {                            // field errors of one form (keys = UserError.fields keys)
+    val fields: Map<String, String>
+    operator fun get(field: String): String?  // also marks the field as shown in the form
+    fun show(errors: Map<String, String>); fun clear(field: String); fun clear()
+    fun unshown(errors: Map<String, String>): Map<String, String>
+}
+class AppState(val services: Services, val dialogs: FileDialogs, startPage: Page = Page.DASHBOARD) {
+    val navigation: Navigation; val page: Page; val intent: PageIntent?
+    fun navigate(page: Page, intent: PageIntent? = null)
+    val refreshTick: Int; fun refresh()       // bumped by every successful run(); pages key their queries on it
+    fun today(): LocalDate                     // services.today() (fixed clock in tests)
+    val messages: List<AppMessage>
+    fun showMessage(text: String, severity: Severity = INFO, title: String? = null, actionLabel: String? = null,
+                    onAction: (() -> Unit)? = null, autoHide: Boolean = severity == SUCCESS, key: String? = null): Long
+    fun success(text: String, actionLabel: String? = null, onAction: (() -> Unit)? = null): Long   // auto-hides (6 s)
+    fun info(text: String, title: String? = null): Long; fun warning(…): Long; fun error(…): Long
+    fun dismissMessage(id: Long)
+    val busy: Boolean                         // write running → write buttons use enabled = !state.busy
+    val unexpectedError: UnexpectedError?; fun reportUnexpected(error: Throwable, context: String); fun dismissUnexpected()
+    fun <T> run(action: () -> T, form: FormErrors? = null, onError: ((UserError) -> Boolean)? = null,
+                refresh: Boolean = true, onSuccess: (T) -> Unit = {}): Boolean
+    fun <T> load(fallback: T, block: () -> T): T
+    fun loadTableLayout(id: String): String?; fun saveTableLayout(id: String, json: String?)
+    companion object { MAX_MESSAGES = 4; AUTO_HIDE_MILLIS = 6000; UNEXPECTED_TEXT }
+}
+@Composable fun rememberAppTableLayout(state: AppState, id: String, columns: List<TableColumn<*>>,
+                                       defaultSort: TableSort? = null): TableLayoutState   // persisted in Settings
+```
+
+- **`run`** executes the service call synchronously on the UI thread (one user action = one call; wrap several calls in
+  `services.db.write { }` to make them atomic — nested writes are savepoints). Success → `form.clear()`, `refresh()`,
+  `onSuccess(result)`. Any `UserError` (incl. `DuplicateBatchError`, `DuplicateOperationError`, `ExpiredBatchError`,
+  `InsufficientStockError`) goes to `onError` first — return `true` when you handled it (e.g. opened a confirmation and will
+  call `run` again with `confirmDuplicate` / `IssueConfirm(allowExpired/allowDuplicate)`). Otherwise field errors go to
+  `form`; errors of fields the form never rendered (`form[key]` not read) and errors without fields appear as a red
+  message at the bottom. Other throwables are logged (`java.util.logging`) and shown in the «Kutilmagan xato» dialog.
+  `run` while `busy` returns `false`; `busy` is released on the next frame (a click queued during the action is ignored),
+  immediately when no UI is attached (unit tests). Do not call `run` from inside `onSuccess`.
+- **Page pattern**: `val tick = state.refreshTick; val today = remember(tick) { state.today() }`;
+  `val rows = remember(tick, filter) { state.load(emptyList()) { state.services.queries.…(filter, today) } }`;
+  intent: `val intent = state.intent as? PageIntent.X` read in `remember { … }` initial state.
+- Table layout ids in use: `reagents` (`REAGENTS_TABLE_ID`), `batch-ledger`. Use your own id per table.
+- Messages appear bottom-centre (max 600 dp wide) over the page; forms show their own inline summary near the save button.
+- Private top-level **classes** in `ui/pages` must have page-specific names (Kotlin forbids two classes with one name in a
+  package even when private); private functions may repeat.
+
+**`ui/pages/Common.kt`** (each documented in the file):
+
+```kotlin
+@Composable fun ScrollPage(title: String, subtitle: String? = null, actions: @Composable RowScope.() -> Unit = {},
+                           testTag: String = "page-scroll", content: @Composable ColumnScope.() -> Unit)  // PageScaffold + vertical scroll
+fun qtyText(base: Long, unit: MeasureUnit): String            // "1 250,5 ml"
+fun qtyNumber(base: Long, unit: MeasureUnit): String          // "1 250,5"
+fun totalsText(totals: Map<Dimension, Long>): String          // "5,5 l · 200 g" (never summed), "—" if empty
+fun dateText(date: LocalDate?): String                        // "17.10.2026" / "—"
+fun dateTimeText(time: LocalDateTime?): String                // "17.10.2026 14:05" / "—"
+fun daysText(days: Long?): String                             // "45", "Bugun tugaydi", "12 kun o‘tgan", "—"
+fun daysPhrase(days: Long?): String?                          // "307 kun qoldi" / "bugun tugaydi" / "12 kun o‘tgan"
+fun expiryHelpText(expiresOn: LocalDate?, today: LocalDate): String?   // "Holati: Yaroqli (307 kun qoldi)" under a date field
+val ExpiryState.style: StatusStyle
+@Composable fun ExpiryChip(state: ExpiryState, modifier: Modifier = Modifier, text: String = state.label)
+fun batchLabel(name: String, series: String, expiresOn: LocalDate?): String   // "Etil spirti 96% · ES-001 · 01.09.2027"
+fun batchQuote(name: String, series: String): String          // "«Etil spirti 96%», seriya ES-001" (messages)
+fun BatchRow.label(): String
+fun placeText(departmentName: String?, storageLocation: String): String     // "Gistologiya / 1-shkaf"
+@Composable fun InfoPair(label: String, value: String, modifier: Modifier = Modifier, valueColor: Color = AppColors.Text)
+@Composable fun CheckField(checked: Boolean, onChange: (Boolean) -> Unit, label: String, modifier: Modifier = Modifier,
+                           enabled: Boolean = true, topPadding: Dp = 20.dp, testTag: String? = null)
+@Composable fun <T> SegmentedChoice(options: List<T>, selected: T, onSelect: (T) -> Unit, modifier: Modifier = Modifier,
+                                    label: (T) -> String = { it.toString() }, testTag: String = "segment")
+@Composable fun ExpiryStateFilter(selected: Set<ExpiryState>, onChange: (Set<ExpiryState>) -> Unit,
+                                  modifier: Modifier = Modifier, counts: Map<ExpiryState, Int>? = null)  // tags state-chip-<STATE>
+val EXPIRY_ORDER: List<ExpiryState>                            // EXPIRED, RED, YELLOW, GREEN, UNKNOWN
+@Composable fun SelectionActionBar(title: String?, actions: List<RowAction>, hint: String, modifier: Modifier = Modifier,
+                                   testTag: String = "selection-bar")   // actions of the selected row above a wide table
+@Composable fun DepartmentSelect(state: AppState, value: Long?, onChange: (Long?) -> Unit, modifier: Modifier = Modifier,
+                                 label: String? = "Bo‘lim", placeholder: String = "Tanlanmagan", allowNone: Boolean = true,
+                                 allowAdd: Boolean = true, error: String? = null, enabled: Boolean = true,
+                                 testTag: String = "department")   // options: none, active (+ current inactive), "+ Yangi bo‘lim qo‘shish…"
+@Composable fun NameDialog(title: String, label: String, onConfirm: (name: String, showError: (String) -> Unit) -> Unit,
+                           onDismiss: () -> Unit, initial: String = "", confirmLabel: String = "Qo‘shish", busy: Boolean = false)
+class ConfirmState { val isOpen: Boolean
+    fun ask(title, message, confirmLabel = "Tasdiqlash", danger = false, dismissLabel = "Bekor qilish", onConfirm: () -> Unit)
+    fun askReason(title, message: String? = null, confirmLabel = "Tasdiqlash", danger = false, label = "Sabab",
+                  placeholder = "Sababini yozing", onConfirm: (String) -> Unit)
+    fun close() }
+@Composable fun rememberConfirmState(): ConfirmState
+@Composable fun ConfirmHost(confirm: ConfirmState, busy: Boolean = false)   // once at the end of the page
+@Composable fun AppDialog(title: String, onDismiss: () -> Unit, modifier: Modifier = Modifier, subtitle: String? = null,
+                          width: Dp = 760.dp, buttons: @Composable RowScope.() -> Unit = {}, testTag: String = "dialog",
+                          content: @Composable ColumnScope.() -> Unit)   // large in-window dialog, fits the window height
+@Composable fun BatchHistoryDialog(state: AppState, batchId: Long, onDismiss: () -> Unit)   // ledger + running balance
+```
+
+**Pages built**: DashboardPage (cards → REAGENTS / EXPIRY / STOCK intents, donut segments → `ReagentsFiltered(states)`,
+department/district bars per dimension with a Hajm/Massa/Dona switch, bar click → `DepartmentOf` / `DistrictOf`, recent
+lists open `BatchHistoryDialog`), ReagentsPage (16 columns of §6, grouping by reagent, filter panel with «Kengaytirilgan
+filtr», state chips, selection action bar + «Amallar» column, edit dialog = `updateReagent` + `updateBatch` in one
+`db.write`, archive with undo, delete per the history rule or archive offer), AddReagentPage (full card, DuplicateBatchError
+flows, success panel). **Test helpers**: `src/test/.../ui/DemoData.kt` (`DemoData.seeded(dir): Pair<Services, Ids>`, fixed
+clock 29.10.2026, data described in its KDoc) and `FakeFileDialogs`. Test tags: `nav-<PAGE>`, `page-content`,
+`messages`, `message-<severity>`, tables `<tag>-row-<key>` / `<tag>-group-<key>`, `reagent-actions-<i>`, form fields
+`add-*`, `edit-*`, `filter-*`, dialogs `edit-dialog`, `history-dialog`.
 
 ## 7. Reports (report/*)
 
