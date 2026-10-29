@@ -15,7 +15,9 @@ import kotlinx.coroutines.delay
 import uz.reaktivombor.desktop.core.AppLogging
 import uz.reaktivombor.desktop.core.DataDir
 import uz.reaktivombor.desktop.core.UserError
+import uz.reaktivombor.desktop.service.Backup
 import uz.reaktivombor.desktop.service.LegacyResult
+import uz.reaktivombor.desktop.service.RecoveryResult
 import uz.reaktivombor.desktop.service.Services
 import uz.reaktivombor.desktop.ui.APP_NAME
 import uz.reaktivombor.desktop.ui.APP_SUBTITLE
@@ -36,6 +38,9 @@ import java.nio.file.Path
 import java.nio.file.Paths
 import uz.reaktivombor.desktop.selftest.runSelfTest
 import java.nio.file.StandardOpenOption
+import java.time.LocalDateTime
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.logging.Level
 import java.util.logging.Logger
 import javax.swing.JOptionPane
@@ -84,6 +89,8 @@ fun main(args: Array<String>) {
     AppLogging.installUncaughtHandler { _, _ -> showErrorLater(AppLogging.GENERIC_ERROR) }
     log.info("start, data dir=$dataDir")
 
+    // Baza ochilmasa (yangiroq versiyadan boshqa sabab — masalan, fayl buzilgan): oxirgi yaroqli zaxiradan tiklashni taklif qilamiz.
+    var recovered: RecoveryResult? = null
     val services = try {
         Services.open(dataDir)
     } catch (e: UserError) {
@@ -91,7 +98,13 @@ fun main(args: Array<String>) {
         fatal(e.message)
     } catch (e: Exception) {
         log.log(Level.SEVERE, "database open failed", e)
-        fatal("Ma’lumotlar bazasini ochib bo‘lmadi:\n${DataDir.dbFile(dataDir)}\n\nTafsilotlar jurnal faylida (logs papkasi).")
+        recovered = offerRecovery(dataDir)
+        try {
+            Services.open(dataDir)
+        } catch (again: Exception) {
+            log.log(Level.SEVERE, "database open failed after recovery", again)
+            fatal("Zaxiradan tiklangan bazani ham ochib bo‘lmadi:\n${DataDir.dbFile(dataDir)}\n\nTafsilotlar jurnal faylida (logs papkasi).")
+        }
     }
 
     // Eski jadvaldan bir martalik ko‘chirish — oyna ochilishidan oldin (ma’lumot darhol ko‘rinsin).
@@ -113,6 +126,7 @@ fun main(args: Array<String>) {
 
     val dialogs = AwtFileDialogs()
     val state = AppState(services, dialogs)
+    recovered?.let { showRecovery(state, it) }
     legacy?.let { showLegacyResult(state, it) }
 
     // Windows o‘chirilganda oyna yopilish xabarini olmaydi — baza baribir to‘g‘ri yopilsin.
@@ -159,6 +173,64 @@ fun main(args: Array<String>) {
             ReaktivControlApp(state)
         }
     }
+}
+
+/**
+ * Baza ochilmadi: oxirgi yaroqli zaxira bo‘lsa — «Oxirgi zaxira nusxadan tiklash» / «Chiqish». Tiklansa buzilgan fayl
+ * o‘chirilmaydi (reaktiv-control-buzuq-<vaqt>.db). Zaxira yo‘q yoki foydalanuvchi chiqsa — dastur yopiladi.
+ */
+private fun offerRecovery(dataDir: Path): RecoveryResult {
+    val dbFile = DataDir.dbFile(dataDir)
+    val backup = runCatching { Backup.latestValid(dataDir) }.onFailure { log.log(Level.WARNING, "backup lookup failed", it) }.getOrNull()
+        ?: fatal(
+            "Ma’lumotlar bazasini ochib bo‘lmadi:\n$dbFile\n\nYaroqli zaxira nusxa topilmadi (${DataDir.backupsDir(dataDir)}).\n" +
+                "Tafsilotlar jurnal faylida (logs papkasi).",
+        )
+    val modified = runCatching {
+        LocalDateTime.ofInstant(Files.getLastModifiedTime(backup).toInstant(), ZoneId.systemDefault())
+            .format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"))
+    }.getOrDefault("")
+    val options = arrayOf("Oxirgi zaxira nusxadan tiklash", "Chiqish")
+    val answer = runCatching {
+        JOptionPane.showOptionDialog(
+            null,
+            "Ma’lumotlar bazasini ochib bo‘lmadi — fayl buzilgan bo‘lishi mumkin:\n$dbFile\n\n" +
+                "Oxirgi yaroqli zaxira nusxa: ${backup.fileName}" + (if (modified.isNotEmpty()) " ($modified)" else "") + ".\n" +
+                "Tiklansa, buzilgan fayl o‘chirilmaydi — shu papkada «reaktiv-control-buzuq-…db» nomi bilan qoladi.\n" +
+                "Zaxira olingandan keyin kiritilgan ma’lumotlarni qayta kiritish kerak bo‘ladi.",
+            APP_NAME,
+            JOptionPane.DEFAULT_OPTION,
+            JOptionPane.ERROR_MESSAGE,
+            null,
+            options,
+            options[0],
+        )
+    }.getOrDefault(-1)
+    if (answer != 0) {
+        runCatching { instanceLock?.release() }
+        exitProcess(1)
+    }
+    return try {
+        Backup.recoverFrom(dataDir, backup)
+    } catch (e: UserError) {
+        log.log(Level.SEVERE, "recovery refused", e)
+        fatal(e.message)
+    } catch (e: Exception) {
+        log.log(Level.SEVERE, "recovery failed", e)
+        fatal("Zaxiradan tiklab bo‘lmadi: ${e.message ?: e.javaClass.simpleName}\n\nTafsilotlar jurnal faylida (logs papkasi).")
+    }
+}
+
+/** Baza zaxiradan tiklandi — oyna ochilgach yopilmaydigan ogohlantirish. */
+private fun showRecovery(state: AppState, result: RecoveryResult) {
+    state.showMessage(
+        "Ma’lumotlar bazasi ochilmadi (buzilgan) — «${result.backup.fileName}» zaxira nusxasidan tiklandi. " +
+            (result.brokenCopy?.let { "Buzilgan fayl o‘chirilmadi: ${it.fileName}. " } ?: "") +
+            "Shu nusxadan keyin kiritilgan operatsiyalarni tekshirib, qayta kiriting.",
+        severity = Severity.WARNING,
+        title = "Baza zaxiradan tiklandi",
+        autoHide = false,
+    )
 }
 
 /** Eski jadvaldan ko‘chirish natijasi — bir marta, xabar sifatida. */

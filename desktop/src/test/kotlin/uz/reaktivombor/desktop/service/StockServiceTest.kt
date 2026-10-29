@@ -451,4 +451,142 @@ class StockServiceTest : ServiceTestBase() {
         assertEquals(0L, count("issue_items"))
         assertEquals(litres("1"), services.stock.remainder(batch))
     }
+
+    @Test
+    fun returnsHaveTheSameDuplicateGuardAsReceiptsAndIssues() {
+        val batch = newBatch("Etil spirti", "ES-001", today.plusDays(200), "1")
+        issueTo("Biologiya", batch, "400", ML)
+        val item = services.queries.issueItems().single()
+        services.stock.returnItem(item.id, ReturnInput(today, "100", ML))
+        // Ikki marta bosilgan: o‘sha qator, o‘sha miqdor (boshqa birlikda yozilgan bo‘lsa ham), o‘sha sana — 120 s ichida.
+        assertThrows(DuplicateOperationError::class.java) { services.stock.returnItem(item.id, ReturnInput(today, "0,1", L)) }
+        assertEquals(1, services.queries.returns().size)
+        assertEquals(ml("700"), services.stock.remainder(batch))
+        // Boshqa miqdor — takror emas; tasdiq bilan — saqlanadi.
+        services.stock.returnItem(item.id, ReturnInput(today, "50", ML))
+        services.stock.returnItem(item.id, ReturnInput(today, "100", ML), confirmDuplicate = true)
+        assertEquals(ml("850"), services.stock.remainder(batch))
+        // 120 soniyadan keyin — takror hisoblanmaydi.
+        clock.advanceSeconds(121)
+        services.stock.returnItem(item.id, ReturnInput(today, "50", ML))
+        assertEquals(4, services.queries.returns().size)
+        assertEquals(movementSum(batch), services.stock.remainder(batch))
+    }
+
+    @Test
+    fun aReturnIntoAnArchivedBatchUnarchivesIt() {
+        val a = newBatch("Etil spirti", "ES-A", today.plusDays(300), "100", unit = ML)
+        val b = newBatch("Etil spirti", "ES-B", today.plusDays(200), "50", unit = ML)
+        issueTo("Biologiya", a, "100", ML)
+        services.reagents.archiveBatch(a)
+        val reagent = services.reagents.list().single().id
+        assertEquals(listOf(b), services.stock.fefoOrder(reagent, Dimension.VOLUME, today).map { it.batchId })
+
+        val item = services.queries.issueItems().single()
+        services.stock.returnItem(item.id, ReturnInput(today, "60", ML))
+        // Qaytgan 60 ml yashirin qolmaydi: partiya arxivdan chiqdi, jami va FEFO da ko‘rinadi, undan berish mumkin.
+        assertFalse(row(a).archived)
+        assertEquals(ml("110"), row(b).groupTotal)
+        assertEquals(listOf(b, a), services.stock.fefoOrder(reagent, Dimension.VOLUME, today).map { it.batchId })
+        val audit = services.queries.auditLogs(AuditFilter(action = AuditAction.UNARCHIVED))
+        assertEquals(1, audit.size)
+        assertEquals(a, audit.single().batchId)
+        assertTrue(audit.single().details, audit.single().details.contains(Stock.UNARCHIVE_REASON))
+        issueTo("Gistologiya", a, "60", ML)
+        assertEquals(0L, services.stock.remainder(a))
+    }
+
+    @Test
+    fun cancellingOrCorrectingAnIssueOfAnArchivedBatchUnarchivesBatchAndReagent() {
+        val batch = newBatch("Aseton", "A-1", today.plusDays(300), "1")
+        issueTo("Biologiya", batch, "1", L)
+        val reagent = services.reagents.list().single().id
+        services.reagents.archiveBatch(batch)
+        services.reagents.archiveReagent(reagent)
+        services.stock.cancelIssueItem(services.queries.issueItems().single().id, "Xato kiritilgan")
+        assertFalse(row(batch).archived)
+        assertFalse(row(batch).reagentArchived)
+        assertEquals(litres("1"), row(batch).groupTotal)
+        assertEquals(listOf("reagent", "batch"), services.queries.auditLogs(AuditFilter(action = AuditAction.UNARCHIVED)).map { it.entity }.reversed())
+
+        // Tuzatish ham (eski qator bekor qilinadi — miqdor arxivdagi partiyaga qaytadi).
+        issueTo("Gistologiya", batch, "1", L)
+        services.reagents.archiveBatch(batch)
+        val item = services.queries.issueItems(OpFilter(departmentId = deptId("Gistologiya"))).single()
+        services.stock.correctIssueItem(item.id, toDepartment(batch, "400", ML, "Gistologiya"), today, "Miqdor xato")
+        assertFalse(row(batch).archived)
+        assertEquals(ml("600"), services.stock.remainder(batch))
+        assertEquals(ml("600"), row(batch).groupTotal)
+        assertEquals(3, services.queries.auditLogs(AuditFilter(action = AuditAction.UNARCHIVED)).size)
+    }
+
+    @Test
+    fun fefoFlagUsesStockAsOfTheIssueDate() {
+        val a = newBatch("Etil spirti", "ES-A", today.plusDays(400), "1", received = today.minusDays(60))
+        val b = newBatch("Etil spirti", "ES-B", today.plusDays(100), "1", received = today.minusDays(5))
+        // 20 kun oldin B hali kelmagan edi — A dan berish FEFO buzilishi emas.
+        issueTo("Biologiya", a, "100", ML, date = today.minusDays(20))
+        val backdated = services.queries.issueItems().single()
+        assertFalse(backdated.fefoOverride)
+        assertTrue(services.queries.auditLogs(AuditFilter(action = AuditAction.ISSUE_DEPARTMENT)).none { it.details.contains("FEFO") })
+        // Bugun B bor — belgi qo‘yiladi.
+        issueTo("Gistologiya", a, "100", ML)
+        assertTrue(services.queries.issueItems(OpFilter(departmentId = deptId("Gistologiya"))).single().fefoOverride)
+        assertEquals(litres("1"), services.stock.remainder(b))
+    }
+
+    @Test
+    fun expiredConfirmationNamesEveryExpiredLineOfTheOperation() {
+        val aseton = newBatch("Aseton", "A-OLD", today.minusDays(1), "1", received = today.minusDays(100))
+        val xloroform = newBatch("Xloroform", "X-OLD", today.minusDays(5), "1", received = today.minusDays(100))
+        val fresh = newBatch("Etanol", "E-1", today.plusDays(100), "1")
+        val input = IssueInput(
+            today,
+            lines = listOf(
+                toDepartment(fresh, "100", ML, "Biologiya"),
+                toDepartment(aseton, "100", ML, "Biologiya"),
+                toDepartment(xloroform, "100", ML, "Gistologiya"),
+            ),
+        )
+        val error = assertThrows(ExpiredBatchError::class.java) { services.stock.issue(input) }
+        // Foydalanuvchi ko‘radigan xabarda ikkala muddati o‘tgan partiya ham bor — bitta tasdiq aynan shularni qamraydi.
+        assertTrue(error.message, error.message.contains("2-qator: «Aseton» (seriya A-OLD)"))
+        assertTrue(error.message, error.message.contains("3-qator: «Xloroform» (seriya X-OLD)"))
+        assertTrue(error.message, error.message.contains("Baribir berish uchun tasdiqlang"))
+        assertEquals(aseton, error.batchId)
+        assertEquals(listOf(aseton, xloroform), error.batchIds)
+        assertEquals(0L, count("issue_items"))
+        services.stock.issue(input, IssueConfirm(allowExpired = true))
+        val items = services.queries.issueItems()
+        assertEquals(setOf(aseton, xloroform), items.filter { it.expiredOverride }.map { it.batchId }.toSet())
+    }
+
+    @Test
+    fun correctingTheInitialReceiptDateAlsoMovesTheBatchReceivedDate() {
+        // Kelgan sana xato yozilgan: 20.10 o‘rniga 02.10 (bugun 29.10).
+        val batch = newBatch("Aseton", "A-1", today.plusDays(300), "1", received = today.minusDays(9), produced = today.minusDays(40))
+        val initial = services.queries.receipts().single().id
+        // Ishlab chiqarilgandan oldin bo‘lolmaydi (partiyaning kelgan sanasi ham shu).
+        val beforeProduced = assertThrows(UserError::class.java) {
+            services.stock.correctReceipt(initial, ReceiptInput(today.minusDays(41), "1", L), "Sana xato")
+        }
+        assertTrue(beforeProduced.message, beforeProduced.fields.containsKey("date"))
+        val corrected = services.stock.correctReceipt(initial, ReceiptInput(today.minusDays(27), "1", L), "Sana xato")
+        assertEquals(today.minusDays(27), services.reagents.batch(batch)!!.receivedOn)
+        assertTrue(services.queries.receipts().single { it.id == corrected }.isInitial)
+        // Endi haqiqiy berish (10.10) qabul qilinadi.
+        issueTo("Biologiya", batch, "100", ML, date = today.minusDays(19))
+        assertEquals(ml("900"), services.stock.remainder(batch))
+        assertTrue(services.queries.auditLogs(AuditFilter(action = AuditAction.BATCH_UPDATED)).any { it.details.contains("kelgan sana") })
+        // Birinchi berishdan keyingi sanaga tuzatib bo‘lmaydi.
+        val afterIssue = assertThrows(UserError::class.java) {
+            services.stock.correctReceipt(corrected, ReceiptInput(today.minusDays(10), "1", L), "Sana xato")
+        }
+        assertTrue(afterIssue.message, afterIssue.fields.containsKey("date"))
+        assertEquals(today.minusDays(27), services.reagents.batch(batch)!!.receivedOn)
+        // Qo‘shimcha (boshlang‘ich bo‘lmagan) kirimni tuzatish partiya sanasini o‘zgartirmaydi.
+        val extra = services.stock.addReceipt(batch, ReceiptInput(today.minusDays(3), "1", L))
+        services.stock.correctReceipt(extra, ReceiptInput(today.minusDays(2), "1", L), "Sana xato")
+        assertEquals(today.minusDays(27), services.reagents.batch(batch)!!.receivedOn)
+    }
 }

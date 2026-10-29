@@ -193,7 +193,8 @@ class ReportsTest : ReportTestBase() {
         assertEquals(7, history.rows.size)
         val es3 = history.rows.filter { history.cell(it, "Seriya raqami") == "ES-003" }
         assertEquals(listOf("Kirim (boshlang‘ich)", "Kirim", "Bekor qilindi (kirim): Xato kiritildi"), es3.map { history.cell(it, "Operatsiya") })
-        assertEquals(listOf("4", "5", "4"), es3.map { num(history.cell(it, "Partiya qoldig‘i")) })
+        // Keyin bekor qilingan kirim va uning teskarisi qoldiqni o‘zgartirmaydi (ikkalasi ro‘yxatda qoladi).
+        assertEquals(listOf("4", "4", "4"), es3.map { num(history.cell(it, "Partiya qoldig‘i")) })
         assertEquals("Keyin bekor qilingan", history.cell(es3[1], "Izoh"))
         assertEquals("1", num(history.cell(es3[2], "Chiqim")))
         assertEquals(LocalDate.of(2026, 10, 26), history.cell(es3[2], "Sana")) // bekor qilish asl sana bilan

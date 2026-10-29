@@ -125,7 +125,7 @@ enum class MeasureUnit(val code: String, val title: String, val dimension: Dimen
 notifications, reports, Excel/PDF colours). Expired batches are never deleted or hidden automatically and are never
 "recommended"; issuing from them needs an explicit confirmation (see §5.4).
 
-## 5. Database (SQLite) — db/Schema.kt, version 1
+## 5. Database (SQLite) — db/Schema.kt, version 2 (v2 adds `legacy_rows`, see §5.5)
 
 Connection: one `java.sql.Connection` per app, all access serialized through `Database` (ReentrantLock).
 PRAGMAs on open: `foreign_keys=ON`, `journal_mode=DELETE`, `synchronous=FULL`, `busy_timeout=5000`.
@@ -306,12 +306,13 @@ Everything above holds; this section pins down the details the core wave had to 
   `message` = all messages joined by `\n`. `DuplicateBatchError(existingBatchId, exact: Boolean, message)`:
   `exact=true` — same name+series+expiry+unit (never creatable; offer an extra receipt); `exact=false` — same name+series
   with another expiry/unit, saved when `createBatch(input, confirmDuplicate = true)`. Series compare case-insensitively.
-  `InsufficientStockError(batchId, available, requested, unit, message)`, `ExpiredBatchError(batchId, message)`,
-  `DuplicateOperationError(message)`.
+  `InsufficientStockError(batchId, available, requested, unit, message)`, `ExpiredBatchError(batchId, message,
+  batchIds = listOf(batchId))` (all expired lines of the operation, each named in `message`), `DuplicateOperationError(message)`.
 - **Units**: `Dimension(title)`; `MeasureUnit.of(code)`, `of(dimension)`, `largest(units)`, `main(dimension)`, `siblings`.
   `Qty.parse(text, unit, label = "Miqdor", allowZero = false, field = null)`, `format`, `formatWithUnit`,
   `formatAuto(base, dimension)` (≥ 1 l → l, else ml), `formatTotals(Map<Dimension, Long>)`, `toDecimal`, `fromDecimal`.
   `format` is exact: up to 6 decimals for l/kg (never rounds), trailing zeros stripped, grouping with a normal space.
+  `of` strips one trailing dot before the alias lookup ("gr.", "гр.", "шт.", "мл." are recognised).
 - **Expiry**: also `daysLeftLabel(days)` ("45", "Bugun tugaydi", "12 kun o‘tgan", "—"), `ExpiryState.severity`
   (EXPIRED 4 > RED 3 > YELLOW 2 > UNKNOWN 1 > GREEN 0), constants `GREEN_AFTER_DAYS = 90`, `RED_UNTIL_DAYS = 30`.
 - **Text**: `nameKey(raw)`, `matchesQuery(query, vararg values)`, `String.charCount()`, `LocalDate.display()` (dd.MM.yyyy).
@@ -324,6 +325,8 @@ Everything above holds; this section pins down the details the core wave had to 
   exact negative of a non-reversal movement of the same batch (trigger `BAD_REVERSAL`). RETURN movements carry both
   `return_id` and `issue_item_id`; a REVERSAL carries the ids of the movement it reverses. Internal table
   `ledger_unlock(batch_id)` is the only way to delete movements/receipts (used solely by `deleteBatch`, below).
+  **Schema v2** (`Schema.VERSION = 2`): `legacy_rows(key TEXT PRIMARY KEY, imported_at TEXT NOT NULL, source TEXT)`;
+  v1 databases (and v1 backups being restored) are upgraded in place on open; the v1 step is unchanged.
 - **Dates of reversals**: a REVERSAL is dated with the ORIGINAL operation's date (`created_at` = when cancelled), so
   period reports and running balances stay consistent after a cancel.
 - **As-of availability**: an issue / cancel-of-receipt / cancel-of-return dated D is allowed only if the balance stays
@@ -335,6 +338,11 @@ Everything above holds; this section pins down the details the core wave had to 
 - **Reagents**: data classes `Reagent`, `Batch`, `NewBatch`, `ReagentEdit`, `BatchEdit` (all nullable dates/units so
   "missing" is a validation message); also `get(id)`, `batch(id)`, `list(includeArchived)`, `batchesOf(reagentId)`.
   `createBatch` un-archives an archived reagent of the same name. Archived batch / reagent: no receipts, no issues.
+  **Received date = one source of truth**: `updateBatch` with a changed `receivedOn` moves the active initial receipt to
+  that day in the same transaction (cancel + new receipt, reason «Kelgan sana tuzatildi»); refused with a `receivedOn`
+  field error when the as-of check fails (earlier-dated stock would go negative). **Minimum stock** whose unit dimension
+  matches none of the reagent's batches (incl. the new one in `createBatch`) → `minStockText` field error; an unchanged,
+  already mismatched minimum does not block `updateReagent`.
   **Delete rule ("no history")**: a batch can be deleted only when its only operation is its own initial receipt
   (no other receipt, issue, return, adjustment or cancellation) — i.e. a just-entered mistake such as a wrong unit;
   its initial receipt + movement are removed with it (via `ledger_unlock`) and a DELETED audit row keeps the details.
@@ -347,7 +355,14 @@ Everything above holds; this section pins down the details the core wave had to 
   Expired = `expires_on < issue date`; write-offs never need the expired confirmation and never set `fefo_override`.
   FEFO override ignores stock that the same operation already takes from the earlier batch. `fefoOrder` returns only
   non-archived batches with stock: non-expired by expiry, then no-expiry (old data), then expired. Duplicate guard
-  (120 s, non-cancelled rows): issue line = batch + base qty + recipient + date; receipt = batch + base qty + date.
+  (120 s, non-cancelled rows): issue line = batch + base qty + recipient + date; receipt = batch + base qty + date;
+  return = issue item + base qty + date (`returnItem(issueItemId, input, confirmDuplicate = false)`).
+  The FEFO flag uses the other batches' stock **as of the issue date** (`available(id, date)`). An issue with expired
+  lines throws one `ExpiredBatchError` naming every expired (non-write-off) line; `allowExpired` then covers them all.
+  **Auto-unarchive**: a return, an issue-item cancel or an issue correction that puts stock back into an archived batch
+  un-archives the batch (and its reagent) in the same transaction with an UNARCHIVED audit row
+  («qaytarish/bekor qilish sababli arxivdan chiqarildi»). `correctReceipt` of the **initial** receipt with a new date also
+  sets `batches.received_on` (not before `produced_on`, not after the first active issue → `date` field error; BATCH_UPDATED audit).
 - **Queries**: models `BatchRow` (+ `dimension`), `BatchFilter` (+ `reagentId`; `includeEmpty` defaults to **true**;
   `remainderMin/Max` are base units applied only to rows of `remainderUnit`'s dimension), `StockTotal`,
   `OpFilter` (+ `batchId`, `reagentId`), `ReceiptRow`, `IssueItemRow` (+ `netQty`, `recipientName` = department /
@@ -358,17 +373,38 @@ Everything above holds; this section pins down the details the core wave had to 
   batchId?, daysLeft?, counted)`, `notificationCount(today)` (bell = expired + red + below-min), `LedgerRow`,
   `MovementKind(label)`. `reagentTypes` = reagents with at least one non-archived batch.
   `fullLedger(): List<LedgerRow>` — every batch's movements (date, id order) with per-batch running balance (reports).
+  Running balance: a reversed movement and its REVERSAL stay listed but do not change the balance (both show the
+  previous balance), so a correction to an earlier date never shows a negative line; day-end balances are unchanged.
 - **Settings**: `var orgName / actorName / autoBackupKeep (1..365) / lastAutoBackup`, `get(key)`, `tableLayout(id)`,
   `setTableLayout(id, json?)` (null = reset), `resetTableLayouts()`. Audit `actor` = `actor_name` setting.
 - **Backup**: `dir`, `create(target): Path`, `autoBackupIfDue(today): Path?` (null when today's already exists),
   `list(): List<BackupFile(path, kind: BackupKind{AUTO, PRE_RESTORE, MANUAL}, size, modifiedAt)>`,
   `validate(path): BackupCheck(userVersion, reagents, batches, movements)` (throws UserError),
-  `restore(path): RestoreResult(preRestoreBackup, check)`; pre-restore file names never overwrite an existing file.
-- **LegacyImport**: `LegacyResult(imported, skipped, notes, file)`, `findLegacyFile()`, `importFile(path)`,
+  `restore(path): RestoreResult(preRestoreBackup, check, preRestoreRaw = false)`; pre-restore file names never overwrite an
+  existing file. If `VACUUM INTO` of the live DB fails (corrupted DB), the pre-restore copy is a raw byte copy taken while
+  the connection is offline (`before-restore-<ts>-raw.db`, `preRestoreRaw = true`) and the restore proceeds. The source
+  is stream-copied into a fresh, writable temp file (a read-only backup never makes the live DB read-only); reopen,
+  migrate, `quick_check` and the BACKUP_RESTORED audit write are all inside the rollback-protected block. The rollback
+  copy is deleted only after success or a successful put-back; otherwise it is kept and the error names its path.
+  **Startup recovery** (no open DB needed): `Backup.validateFile(path)`, `Backup.latestValid(dataDir): Path?`,
+  `Backup.recoverFrom(dataDir, backup, clock)` / `recoverFromLatest(dataDir, clock): RecoveryResult(backup, brokenCopy?,
+  check)` — moves the broken DB aside as `reaktiv-control-buzuq-<yyyyMMdd-HHmmss>.db` (never deleted), puts a fresh copy
+  of the backup in place, opens/migrates/quick_checks it and writes BACKUP_RESTORED. `Main.kt`: when `Services.open`
+  fails for any reason other than "newer version", a Swing dialog offers «Oxirgi zaxira nusxadan tiklash» / «Chiqish»;
+  after recovery a non-auto-hiding warning banner is shown.
+- **LegacyImport**: `LegacyResult(imported, skipped, notes, file, alreadyImported = 0)`, `findLegacyFile()`, `importFile(path)`,
   `autoImportIfNeeded(): LegacyResult?` (call on startup), `isDone()`. Location override `-Dreaktiv.legacyFile=…`.
-  Idempotency: SHA-256 of the file text in `app_settings.legacy_import_hashes`; `legacy_import` = last import info.
+  Idempotency: per row — key `"<createdAt>|<nameKey(cleanName(name))>"` (`LegacyImport.rowKey`) in `legacy_rows`; a row
+  whose key exists is skipped with the note «allaqachon ko‘chirilgan» (counted in `skipped` and `alreadyImported`); a file
+  with no new row → UserError, nothing written. The SHA-256 of the file text (`app_settings.legacy_import_hashes`) stays as
+  a fast path; `legacy_import` = last import info. Importing `reaktivlar-jadval(.bak).json` while a sibling
+  `reaktivlar.json` is newer adds a note (also in the LEGACY_IMPORTED audit) that ≤1.0.5 changes are in that file.
   Old rows: missing expiry stays NULL (UNKNOWN), an issued amount without a department becomes an ADJUSTMENT, issued >
-  stock is capped; all legacy operations are dated with the row's receipt date.
+  stock is capped; all legacy operations are dated with the row's receipt date. «Kelgan vaqt» / produced date outside
+  01.01.1990…today are dropped like `createdOn` (note + original text in the batch note). An empty/unknown unit is taken
+  from another row of the same name in the file when unambiguous; otherwise the row is skipped and its raw values are
+  written to an audit row (LEGACY_IMPORTED, entity `legacy_row`). Unparseable dates / department text / amounts get a note
+  and their raw text in the batch note; amount notes say «son emas» / «manfiy» / «juda katta».
 - **Logging**: `AppLogging.setup(dataDir)` installs a UTF-8 `FileHandler` (`logs/reaktiv-control.%g.log`, 1 MB × 5)
   on the root logger; services log only operation ids at INFO.
 - **ExcelImport** (`Services.excelImport`, `ExcelImport(db, audit, directory, reagents, clock)`):

@@ -159,6 +159,32 @@ class DatabaseTest : ServiceTestBase() {
     }
 
     @Test
+    fun aVersion1DatabaseIsUpgradedInPlace() {
+        assertEquals(2, Schema.VERSION)
+        val batch = newBatch("Etil spirti", "ES-001", today.plusDays(200), "5")
+        issueTo("Biologiya", batch, "1", L)
+        // 1-versiyadagi baza (legacy_rows jadvali hali yo‘q).
+        db.write { it.exec("DROP TABLE legacy_rows") }
+        db.write { it.exec("PRAGMA user_version = 1") }
+        db.close()
+
+        val upgraded = Database(DataDir.dbFile(dataDir))
+        try {
+            upgraded.read { conn ->
+                assertEquals(2, Schema.userVersion(conn))
+                assertEquals(1L, conn.queryLong("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'legacy_rows'"))
+            }
+            val again = Services(upgraded, dataDir, clock)
+            assertEquals(litres("4"), again.stock.remainder(batch))
+            assertEquals(1, again.queries.issueItems().size)
+            upgraded.write { it.update("INSERT INTO legacy_rows(key, imported_at, source) VALUES ('1|etil spirti', '2026-10-29T09:00:00', 'x.json')") }
+            assertEquals(1L, upgraded.read { it.queryLong("SELECT COUNT(*) FROM legacy_rows") })
+        } finally {
+            upgraded.close()
+        }
+    }
+
+    @Test
     fun aDatabaseFromANewerVersionIsRefused() {
         db.write { it.exec("PRAGMA user_version = 99") }
         db.close()

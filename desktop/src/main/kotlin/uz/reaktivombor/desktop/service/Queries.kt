@@ -319,7 +319,10 @@ enum class MovementKind(val label: String) {
     REVERSAL("Bekor qilish"),
 }
 
-/** Harakatlar jurnali qatori: [balance] — shu partiyaning shu harakatdan keyingi qoldig‘i. */
+/**
+ * Harakatlar jurnali qatori: [balance] — shu partiyaning shu harakatdan keyingi qoldig‘i. Bekor qilingan harakat va uning
+ * teskari (REVERSAL) yozuvi qoldiqni o‘zgartirmaydi — ikkalasida ham oldingi qoldiq ko‘rsatiladi.
+ */
 data class LedgerRow(
     val movementId: Long,
     val batchId: Long,
@@ -977,9 +980,14 @@ class Queries(private val db: Database, private val audit: Audit) {
                 ),
             )
         }
+        // Bekor qilingan harakat va uning teskarisi qoldiqni o‘zgartirmaydi (ikkalasi ro‘yxatda qoladi). Teskari yozuv asl sana
+        // bilan, lekin keyinroq yoziladi: ularni qo‘shib borilsa, oraliqda manfiy qoldiq ko‘rinib qolardi (masalan, berish
+        // oldingi sanaga tuzatilganda). Juftlik bir sanada bo‘lgani uchun har bir kun oxiridagi qoldiq o‘zgarmaydi.
+        val reversed = raws.mapNotNullTo(HashSet()) { it.row.reversesId }
         val balances = HashMap<Long, Long>()
         return raws.map { raw ->
-            val balance = (balances[raw.row.batchId] ?: 0L) + raw.row.qty
+            val counted = raw.row.reversesId == null && raw.row.movementId !in reversed
+            val balance = (balances[raw.row.batchId] ?: 0L) + if (counted) raw.row.qty else 0L
             balances[raw.row.batchId] = balance
             raw.row.copy(balance = balance)
         }

@@ -95,4 +95,21 @@ class UnitsTest {
         assertNull(MeasureUnit.of("xyz"))
         assertNull(MeasureUnit.of(""))
     }
+
+    @Test
+    fun abbreviationsWithATrailingDotAreRecognised() {
+        // Eski jadvalda «gr.», «гр.», «шт.» kabi yozilgan birliklar ham tanilsin (avval nuqta qisqartmani yashirardi).
+        assertEquals(MeasureUnit.G, MeasureUnit.of("gr."))
+        assertEquals(MeasureUnit.G, MeasureUnit.of("гр."))
+        assertEquals(MeasureUnit.G, MeasureUnit.of("г."))
+        assertEquals(MeasureUnit.PIECE, MeasureUnit.of("шт."))
+        assertEquals(MeasureUnit.PIECE, MeasureUnit.of("ta."))
+        assertEquals(MeasureUnit.ML, MeasureUnit.of("мл."))
+        assertEquals(MeasureUnit.KG, MeasureUnit.of("кг."))
+        assertEquals(MeasureUnit.L, MeasureUnit.of(" л. "))
+        assertEquals(MeasureUnit.G, MeasureUnit.of("g."))
+        assertEquals(MeasureUnit.ML, MeasureUnit.of("ML."))
+        assertNull(MeasureUnit.of("."))
+        assertNull(MeasureUnit.of("xyz."))
+    }
 }

@@ -26,6 +26,7 @@ import uz.reaktivombor.desktop.db.update
 import java.sql.Connection
 import java.time.Clock
 import java.time.LocalDate
+import java.time.LocalDateTime
 import java.util.logging.Logger
 
 /** Kimga berildi: bo‘lim, tuman yoki hisobdan chiqarish (masalan, muddati o‘tgani uchun). */
@@ -113,6 +114,12 @@ class Stock(
     companion object {
         /** Shu vaqt ichida aynan bir xil operatsiya qayta saqlansa — ogohlantirish (ikki marta bosish). */
         const val DUPLICATE_WINDOW_SECONDS = 120L
+
+        /** Qoldiq arxivdagi partiyaga qaytganda audit yozuvi matni. */
+        const val UNARCHIVE_REASON = "qaytarish/bekor qilish sababli arxivdan chiqarildi"
+
+        /** Partiya kelgan sanasi o‘zgarganda boshlang‘ich kirim tuzatilishi sababi. */
+        const val RECEIVED_DATE_REASON = "Kelgan sana tuzatildi"
         private val log: Logger = Logger.getLogger("uz.reaktivombor.service.Stock")
     }
 
@@ -191,7 +198,8 @@ class Stock(
     /**
      * Bir yoki bir nechta qator — bitta tranzaksiyada. Bir partiyadagi qatorlar qo‘shib tekshiriladi; birortasida qoldiq
      * yetmasa — [InsufficientStockError] va hech narsa saqlanmaydi. Muddati o‘tgan partiya — [ExpiredBatchError]
-     * ([IssueConfirm.allowExpired] bo‘lmasa), 120 s ichidagi aynan bir xil qator — [DuplicateOperationError].
+     * ([IssueConfirm.allowExpired] bo‘lmasa; xabarda muddati o‘tgan HAMMA qatorlar), 120 s ichidagi aynan bir xil qator —
+     * [DuplicateOperationError].
      */
     fun issue(input: IssueInput, confirm: IssueConfirm = IssueConfirm.none): Long = stockGuard {
         db.write { conn ->
@@ -237,7 +245,24 @@ class Stock(
         if (input.lines.isEmpty()) throw UserError("Kamida bitta qator kiriting.", "lines")
 
         // 1. Har bir qatorni tekshirish (hali hech narsa yozilmaydi).
-        val prepared = input.lines.mapIndexed { index, line -> prepareLine(conn, index + 1, line, date, confirm, input.lines.size) }
+        val prepared = input.lines.mapIndexed { index, line -> prepareLine(conn, index + 1, line, date, input.lines.size) }
+
+        // 1a. Muddati o‘tgan partiyalar — hammasi bitta xabarda: bitta tasdiq foydalanuvchi ko‘rgan hamma qatorni qamraydi.
+        if (!confirm.allowExpired) {
+            val expired = prepared.filter { p ->
+                p.line.recipientType != RecipientType.WRITE_OFF && p.batch.expiresOn != null && p.batch.expiresOn < date
+            }
+            if (expired.isNotEmpty()) {
+                val text = expired.joinToString("\n") { p ->
+                    "${prefix(p.number, prepared.size)}${p.batch.label} partiyasining yaroqlilik muddati o‘tgan (${p.batch.expiresOn!!.display()})."
+                }
+                throw ExpiredBatchError(
+                    expired.first().batch.id,
+                    text + (if (expired.size > 1) "\n" else " ") + "Baribir berish uchun tasdiqlang.",
+                    expired.map { it.batch.id }.distinct(),
+                )
+            }
+        }
 
         // 2. Qoldiq: bir partiyadagi qatorlar qo‘shiladi; sana bo‘yicha — keyingi kunlarda ham manfiy bo‘lmasin.
         val requested = prepared.groupBy { it.batch.id }.mapValues { (_, lines) -> lines.sumOf { it.qty } }
@@ -309,7 +334,7 @@ class Stock(
         return issueId to itemIds
     }
 
-    private fun prepareLine(conn: Connection, number: Int, line: IssueLine, date: LocalDate, confirm: IssueConfirm, total: Int): PreparedLine {
+    private fun prepareLine(conn: Connection, number: Int, line: IssueLine, date: LocalDate, total: Int): PreparedLine {
         val p = prefix(number, total)
         val batch = loadBatchInfo(conn, line.batchId) ?: throw UserError(cap(p, "partiya topilmadi."))
         if (batch.archived || batch.reagentArchived) throw UserError("$p${batch.label} arxivda — undan berib bo‘lmaydi.")
@@ -357,45 +382,42 @@ class Stock(
         if (receivedOn != null && date < receivedOn) {
             throw UserError(cap(p, "berish sanasi (${date.display()}) partiya kelgan sanadan (${receivedOn.display()}) oldin bo‘lishi mumkin emas."), "date")
         }
-        val expires = batch.expiresOn
-        if (expires != null && expires < date && line.recipientType != RecipientType.WRITE_OFF && !confirm.allowExpired) {
-            throw ExpiredBatchError(
-                batch.id,
-                "$p${batch.label} partiyasining yaroqlilik muddati o‘tgan (${expires.display()}). Baribir berish uchun tasdiqlang.",
-            )
-        }
         return PreparedLine(number, line, batch, unit, qty, departmentId, districtId, recipientName, organization, receiver, note)
     }
 
     /**
-     * FEFO: shu reaktiv va o‘lchov turidagi, arxivda bo‘lmagan, muddati o‘tmagan, qoldig‘i bor (shu operatsiyada olinadiganidan
-     * tashqari) boshqa partiya muddati ertaroq tugaydimi.
+     * FEFO: shu reaktiv va o‘lchov turidagi, arxivda bo‘lmagan, muddati o‘tmagan, berish sanasida ([date]) qoldig‘i bor
+     * (shu operatsiyada olinadiganidan tashqari) boshqa partiya muddati ertaroq tugaydimi. O‘tgan sana bilan yozilgan berishda
+     * o‘sha kuni hali kelmagan yoki tugagan partiya hisobga olinmaydi.
      */
     private fun earlierBatchExists(conn: Connection, batch: BatchInfo, date: LocalDate, requested: Map<Long, Long>): Boolean {
         val others = conn.query(
             """
-            SELECT b.id, b.expires_on, b.unit, COALESCE((SELECT SUM(m.qty) FROM stock_movements m WHERE m.batch_id = b.id), 0) AS remainder
+            SELECT b.id, b.expires_on, b.unit
             FROM batches b
             WHERE b.reagent_id = ? AND b.id <> ? AND b.archived = 0 AND b.expires_on IS NOT NULL AND b.expires_on >= ?
             """,
             batch.reagentId, batch.id, date,
-        ) { rs -> Triple(rs.long("id"), rs.date("expires_on")!!, rs.unit("unit")) to rs.long("remainder") }
-        return others.any { (info, remainder) ->
-            val (id, expires, unit) = info
+        ) { rs -> Triple(rs.long("id"), rs.date("expires_on")!!, rs.unit("unit")) }
+        return others.any { (id, expires, unit) ->
             unit.dimension == batch.unit.dimension &&
                 (batch.expiresOn == null || expires < batch.expiresOn) &&
-                remainder - (requested[id] ?: 0L) > 0
+                availableFrom(conn, id, date) - (requested[id] ?: 0L) > 0
         }
     }
 
     // ---------------------------------------------------------------- qaytarish
 
-    /** Berilgan qatordan qaytarish. Faol qaytarishlar yig‘indisi berilganidan oshmaydi. */
-    fun returnItem(issueItemId: Long, input: ReturnInput): Long = stockGuard {
-        db.write { conn -> insertReturn(conn, issueItemId, input) }
+    /**
+     * Berilgan qatordan qaytarish. Faol qaytarishlar yig‘indisi berilganidan oshmaydi. 120 s ichida aynan shunday qaytarish
+     * (o‘sha qator, miqdor, sana) saqlangan bo‘lsa — [DuplicateOperationError] ([confirmDuplicate] bo‘lmasa).
+     * Partiya (yoki reaktiv) arxivda bo‘lsa — shu tranzaksiyada arxivdan chiqariladi: qoldiq jamilardan yashirinmasin.
+     */
+    fun returnItem(issueItemId: Long, input: ReturnInput, confirmDuplicate: Boolean = false): Long = stockGuard {
+        db.write { conn -> insertReturn(conn, issueItemId, input, confirmDuplicate) }
     }
 
-    private fun insertReturn(conn: Connection, issueItemId: Long, input: ReturnInput): Long {
+    private fun insertReturn(conn: Connection, issueItemId: Long, input: ReturnInput, confirmDuplicate: Boolean): Long {
         val today = clock.today()
         val item = loadItem(conn, issueItemId) ?: throw UserError("Berish yozuvi topilmadi.")
         if (item.cancelled) throw UserError("Bekor qilingan berishdan qaytarib bo‘lmaydi.")
@@ -422,6 +444,17 @@ class Stock(
         qty!!
         unit!!
 
+        val now = clock.now()
+        if (!confirmDuplicate) {
+            val same = conn.queryLong(
+                """
+                SELECT COUNT(*) FROM returns
+                WHERE issue_item_id = ? AND qty = ? AND returned_on = ? AND cancelled_at IS NULL AND created_at >= ?
+                """,
+                issueItemId, qty, date, now.minusSeconds(DUPLICATE_WINDOW_SECONDS),
+            )
+            if (same > 0) throw DuplicateOperationError(duplicateMessage("qaytarish"))
+        }
         val returned = activeReturns(conn, issueItemId)
         if (returned + qty > item.qty) {
             throw UserError(
@@ -430,7 +463,7 @@ class Stock(
                 "qtyText",
             )
         }
-        val now = clock.now()
+        unarchiveForReturnedStock(conn, batch, now)
         val id = conn.insert(
             """
             INSERT INTO returns(issue_item_id, returned_on, qty, entered_qty, entered_unit, reason, received_by, created_at)
@@ -488,18 +521,97 @@ class Stock(
         }
     }
 
-    /** Kirimni tuzatish: eski kirim bekor qilinadi va yangisi (corrects_id bilan) yoziladi — bitta tranzaksiyada. */
+    /**
+     * Kirimni tuzatish: eski kirim bekor qilinadi va yangisi (corrects_id bilan) yoziladi — bitta tranzaksiyada.
+     * Boshlang‘ich kirimning sanasi o‘zgarsa — partiyaning kelgan sanasi (batches.received_on) ham o‘sha sanaga o‘tadi
+     * (ishlab chiqarilgan sanadan oldin va birinchi berishdan keyin bo‘lolmaydi).
+     */
     fun correctReceipt(id: Long, input: ReceiptInput, reason: String?): Long = stockGuard {
         db.write { conn ->
             val text = reasonText(reason, "Tuzatish sababi")
             val old = loadReceipt(conn, id) ?: throw UserError("Kirim topilmadi.")
             if (old.cancelled) throw UserError("Bekor qilingan kirimni tuzatib bo‘lmaydi.")
+            val newDate = input.date
+            val syncBatch = old.isInitial && newDate != null && newDate != old.date
+            // Sana o‘zi noto‘g‘ri bo‘lsa (kelajak, oraliqdan tashqari) — xabarni kirim tekshiruvi beradi.
+            if (syncBatch && newDate!! >= MIN_DATE && newDate <= clock.today()) checkInitialDate(conn, old.batchId, newDate)
             // Avval yangisi — eski kirim bekor qilinganda qoldiq vaqtincha ham manfiy bo‘lmasin.
             val newId = insertReceipt(conn, old.batchId, input, confirmDuplicate = true, isInitial = old.isInitial, correctsId = id)
             cancelReceiptIn(conn, id, text, auditAction = AuditAction.CORRECTED)
+            if (syncBatch) syncReceivedOn(conn, old.batchId, newDate!!)
             log.info("receipt corrected old=$id new=$newId")
             newId
         }
+    }
+
+    /** Boshlang‘ich kirimning yangi sanasi partiyaning kelgan sanasi bo‘la oladimi (ishlab chiqarilgandan keyin, birinchi berishgacha). */
+    private fun checkInitialDate(conn: Connection, batchId: Long, date: LocalDate) {
+        val produced = conn.queryOne("SELECT produced_on FROM batches WHERE id = ?", batchId) { rs -> rs.date("produced_on") }
+        if (produced != null && date < produced) {
+            throw UserError(
+                "Boshlang‘ich kirim sanasi — partiyaning kelgan sanasi: u ishlab chiqarilgan sanadan (${produced.display()}) oldin bo‘lishi mumkin emas.",
+                "date",
+            )
+        }
+        val firstIssue = firstIssueDate(conn, batchId)
+        if (firstIssue != null && date > firstIssue) {
+            throw UserError("Partiyadan ${firstIssue.display()} da berilgan — kelgan sana undan keyin bo‘lishi mumkin emas.", "date")
+        }
+    }
+
+    /** Partiyaning kelgan sanasi = faol boshlang‘ich kirim sanasi (bitta haqiqat manbai). */
+    private fun syncReceivedOn(conn: Connection, batchId: Long, date: LocalDate) {
+        val batch = loadBatchInfo(conn, batchId)!!
+        if (batch.receivedOn == date) return
+        conn.update("UPDATE batches SET received_on = ?, updated_at = ? WHERE id = ?", date, clock.now(), batchId)
+        audit.log(
+            conn, AuditAction.BATCH_UPDATED, "batch", batchId,
+            "${batch.label}: kelgan sana: ${batch.receivedOn?.display() ?: "—"} → ${date.display()} (boshlang‘ich kirim tuzatildi)",
+            reagentId = batch.reagentId, batchId = batchId,
+        )
+    }
+
+    /**
+     * Partiya kartochkasida kelgan sana o‘zgarganda ([Reagents.updateBatch]): faol boshlang‘ich kirim o‘sha kunga ko‘chiriladi —
+     * bekor qilish + yangi yozuv (sabab [RECEIVED_DATE_REASON]). Ochiq tranzaksiya ichida chaqiriladi. Ko‘chirilsa —
+     * yangi kirim id’si; boshlang‘ich kirim yo‘q yoki sanasi allaqachon shu bo‘lsa — null. Oldingi sanalardagi qoldiq manfiy
+     * bo‘lib qolsa — [UserError] (sana bo‘yicha qoldiq tekshiruvi).
+     */
+    internal fun moveInitialReceipt(conn: Connection, batchId: Long, date: LocalDate): Long? {
+        class Initial(
+            val id: Long, val qty: Long, val date: LocalDate, val enteredQty: String, val enteredUnit: MeasureUnit,
+            val receivedBy: String, val storage: String, val docNo: String, val note: String,
+        )
+        val old = conn.queryOne(
+            """
+            SELECT id, qty, received_on, entered_qty, entered_unit, received_by, storage_location, doc_no, note
+            FROM receipts WHERE batch_id = ? AND is_initial = 1 AND cancelled_at IS NULL ORDER BY id DESC LIMIT 1
+            """,
+            batchId,
+        ) { rs ->
+            Initial(
+                rs.long("id"), rs.long("qty"), rs.date("received_on")!!, rs.str("entered_qty"), rs.unit("entered_unit"),
+                rs.str("received_by"), rs.str("storage_location"), rs.str("doc_no"), rs.str("note"),
+            )
+        } ?: return null
+        if (old.date == date) return null
+        val batch = loadBatchInfo(conn, batchId)!!
+        val now = clock.now()
+        val id = conn.insert(
+            """
+            INSERT INTO receipts(batch_id, received_on, qty, entered_qty, entered_unit, received_by, storage_location, doc_no, note,
+                is_initial, created_at, corrects_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+            """,
+            batchId, date, old.qty, old.enteredQty, old.enteredUnit, old.receivedBy, old.storage, old.docNo, old.note, now, old.id,
+        )
+        insertMovement(conn, batchId, "RECEIPT", old.qty, date, now, receiptId = id)
+        audit.log(
+            conn, AuditAction.RECEIPT, "receipt", id, "${batch.label}: kirim ${date.display()} (boshlang‘ich, sanasi tuzatildi)",
+            reagentId = batch.reagentId, batchId = batchId, qtyText = Qty.formatWithUnit(old.qty, batch.unit),
+        )
+        cancelReceiptIn(conn, old.id, RECEIVED_DATE_REASON, auditAction = AuditAction.CORRECTED)
+        return id
     }
 
     /** Berishni tuzatish: eski qator bekor qilinadi, yangisi (o‘sha hujjat ma’lumotlari bilan) yoziladi. Yangi qator id’si. */
@@ -551,6 +663,7 @@ class Stock(
         val batch = loadBatchInfo(conn, item.batchId)!!
         val movement = conn.queryLong("SELECT id FROM stock_movements WHERE issue_item_id = ? AND kind = 'ISSUE'", id)
         val now = clock.now()
+        unarchiveForReturnedStock(conn, batch, now)
         conn.update("UPDATE issue_items SET cancelled_at = ?, cancel_reason = ? WHERE id = ?", now, reason, id)
         reverseMovement(conn, movement, reason, now)
         audit.log(
@@ -686,6 +799,29 @@ class Stock(
         conn.queryOne("SELECT batch_id, qty, received_on, is_initial, cancelled_at FROM receipts WHERE id = ?", id) { rs ->
             ReceiptInfo(rs.long("batch_id"), rs.long("qty"), rs.date("received_on")!!, rs.bool("is_initial"), rs.getString("cancelled_at") != null)
         }
+
+    /**
+     * Qoldiq arxivdagi partiyaga qaytsa (qaytarish, berishni bekor qilish yoki tuzatish) — partiya va reaktiv shu tranzaksiyada
+     * arxivdan chiqariladi (audit bilan): aks holda qoldiq jamilar, FEFO va jadvaldan yashirinib qoladi.
+     */
+    private fun unarchiveForReturnedStock(conn: Connection, batch: BatchInfo, now: LocalDateTime) {
+        if (batch.reagentArchived) {
+            conn.update("UPDATE reagents SET archived = 0, updated_at = ? WHERE id = ?", now, batch.reagentId)
+            audit.log(conn, AuditAction.UNARCHIVED, "reagent", batch.reagentId, "«${batch.name}» — $UNARCHIVE_REASON", reagentId = batch.reagentId)
+        }
+        if (batch.archived) {
+            conn.update("UPDATE batches SET archived = 0, updated_at = ? WHERE id = ?", now, batch.id)
+            audit.log(
+                conn, AuditAction.UNARCHIVED, "batch", batch.id, "${batch.label} — $UNARCHIVE_REASON",
+                reagentId = batch.reagentId, batchId = batch.id,
+            )
+        }
+    }
+
+    private fun firstIssueDate(conn: Connection, batchId: Long): LocalDate? = conn.queryOne(
+        "SELECT MIN(h.issued_on) FROM issue_items i JOIN issues h ON h.id = i.issue_id WHERE i.batch_id = ? AND i.cancelled_at IS NULL",
+        batchId,
+    ) { rs -> rs.getString(1)?.let(LocalDate::parse) }
 
     private fun activeReturns(conn: Connection, issueItemId: Long): Long =
         conn.queryLong("SELECT COALESCE(SUM(qty), 0) FROM returns WHERE issue_item_id = ? AND cancelled_at IS NULL", issueItemId)

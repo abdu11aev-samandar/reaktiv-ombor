@@ -1,6 +1,7 @@
 package uz.reaktivombor.desktop.service
 
 import uz.reaktivombor.desktop.cleanName
+import uz.reaktivombor.desktop.core.Dimension
 import uz.reaktivombor.desktop.core.DuplicateBatchError
 import uz.reaktivombor.desktop.core.MeasureUnit
 import uz.reaktivombor.desktop.core.Qty
@@ -116,6 +117,9 @@ class Reagents(
         private val log: Logger = Logger.getLogger("uz.reaktivombor.service.Reagents")
     }
 
+    /** Partiya kelgan sanasi o‘zgarganda boshlang‘ich kirimni ko‘chirish uchun (o‘sha bazada, o‘sha tranzaksiyada). */
+    private val stock = Stock(db, audit, directory, clock)
+
     // ---------------------------------------------------------------- o‘qish
 
     fun get(id: Long): Reagent? = db.read { conn -> findReagent(conn, id) }
@@ -190,6 +194,11 @@ class Reagents(
         if (unit == null) errors.add("unit", "O‘lchov birligini tanlang.")
         val qty = unit?.let { u -> errors.capture("initialQtyText") { Qty.parse(input.initialQtyText, u, "Kelgan miqdor", field = "initialQtyText") } }
         val minStock = errors.capture("minStockText") { parseMinStock(input.minStockText, input.minStockUnit ?: unit) }
+        if (minStock != null && unit != null && minStock.second.dimension != unit.dimension) {
+            // Minimal qoldiq faqat o‘z o‘lchov turidagi partiyalarga qo‘llanadi: reaktivning bunday partiyasi bo‘lmasa — hech qachon.
+            val dimensions = batchDimensions(nameKey(name)) + unit.dimension
+            if (minStock.second.dimension !in dimensions) errors.add("minStockText", minUnitMismatch(dimensions))
+        }
         errors.throwIfAny()
 
         return db.write { conn ->
@@ -318,6 +327,14 @@ class Reagents(
                 if (note != reagent.note) add("izoh o‘zgardi")
             }
             if (changes.isEmpty()) return@write
+            // Yangi (o‘zgargan) minimal qoldiq reaktivning birorta partiyasiga ham qo‘llanmasa — xato. Avvaldan shunday saqlangan
+            // minimum o‘zgarmasa, reaktivning boshqa maydonlarini tahrirlash mumkin bo‘lib qoladi.
+            if (minStock != null && (minStock.first != reagent.minStock || minStock.second != reagent.minStockUnit)) {
+                val dimensions = batchDimensions(conn, id)
+                if (dimensions.isNotEmpty() && minStock.second.dimension !in dimensions) {
+                    throw UserError(minUnitMismatch(dimensions), "minStockText")
+                }
+            }
             conn.update(
                 "UPDATE reagents SET name = ?, name_key = ?, formula = ?, min_stock = ?, min_stock_unit = ?, note = ?, updated_at = ? WHERE id = ?",
                 name, key, formula, minStock?.first, minStock?.second, note, clock.now(), id,
@@ -368,6 +385,18 @@ class Reagents(
                 if (firstIssue != null && receivedOn > firstIssue) {
                     throw UserError(
                         "Partiyadan ${firstIssue.display()} da berilgan — kelgan sana undan keyin bo‘lishi mumkin emas.",
+                        "receivedOn",
+                    )
+                }
+            }
+            // Kelgan sana bitta: partiya kartochkasidagi sana o‘zgarsa — boshlang‘ich kirim ham shu kunga ko‘chiriladi.
+            if (receivedOn != null && receivedOn != batch.receivedOn) {
+                try {
+                    stock.moveInitialReceipt(conn, id, receivedOn)
+                } catch (e: UserError) {
+                    throw UserError(
+                        "Kelgan sanani ${receivedOn.display()} qilib bo‘lmaydi: boshlang‘ich kirim shu sanaga ko‘chirilsa, undan oldingi " +
+                            "sanalardagi qoldiq manfiy bo‘lib qoladi.",
                         "receivedOn",
                     )
                 }
@@ -490,6 +519,18 @@ class Reagents(
         if (unit == null) throw UserError("Minimal qoldiq birligini tanlang.", "minStockText")
         return Qty.parse(text, unit, "Minimal qoldiq", allowZero = true, field = "minStockText") to unit
     }
+
+    /** Reaktivning partiyalari qaysi o‘lchov turlarida (arxivdagilari ham). */
+    private fun batchDimensions(conn: Connection, reagentId: Long): Set<Dimension> =
+        conn.query("SELECT DISTINCT unit FROM batches WHERE reagent_id = ?", reagentId) { it.unit("unit").dimension }.toSet()
+
+    private fun batchDimensions(key: String): Set<Dimension> = db.read { conn ->
+        conn.queryOne("SELECT id FROM reagents WHERE name_key = ?", key) { it.getLong(1) }?.let { batchDimensions(conn, it) } ?: emptySet()
+    }
+
+    private fun minUnitMismatch(dimensions: Set<Dimension>): String =
+        "Minimal qoldiq birligi reaktiv partiyalarining birligiga mos emas — bunday minimum hech qachon tekshirilmaydi. " +
+            dimensions.flatMap { MeasureUnit.of(it) }.joinToString(" yoki ") { it.code } + " tanlang."
 
     private fun requireActiveDepartment(conn: Connection, departmentId: Long) {
         val place = directory.find(conn, PlaceKind.DEPARTMENT, departmentId) ?: throw UserError("Tanlangan bo‘lim topilmadi.", "departmentId")

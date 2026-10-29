@@ -10,6 +10,7 @@ import org.junit.Test
 import uz.reaktivombor.desktop.core.DuplicateBatchError
 import uz.reaktivombor.desktop.core.ExpiryState
 import uz.reaktivombor.desktop.core.UserError
+import uz.reaktivombor.desktop.db.update
 
 class ReagentsServiceTest : ServiceTestBase() {
 
@@ -313,5 +314,79 @@ class ReagentsServiceTest : ServiceTestBase() {
         assertEquals(listOf("Metil spirti"), services.reagents.searchNames("met"))
         // Shu bilan boshlanadigani birinchi.
         assertEquals(listOf("Etil spirti", "Metil spirti"), services.reagents.searchNames("ETI"))
+    }
+
+    @Test
+    fun changingTheBatchReceivedDateMovesTheInitialReceipt() {
+        val id = newBatch("Aseton", "A-1", today.plusDays(100), "1", received = today.minusDays(2))
+        services.reagents.updateBatch(id, BatchEdit(series = "A-1", receivedOn = today.minusDays(10), expiresOn = today.plusDays(100)))
+        assertEquals(today.minusDays(10), services.reagents.batch(id)!!.receivedOn)
+        // Boshlang‘ich kirim ham shu sanada (bekor qilish + yangi yozuv, tarix saqlanadi).
+        val active = services.queries.receipts(OpFilter(batchId = id))
+        assertEquals(listOf(today.minusDays(10)), active.map { it.receivedOn })
+        assertTrue(active.single().isInitial)
+        val cancelled = services.queries.receipts(OpFilter(batchId = id, includeCancelled = true)).single { it.cancelled }
+        assertEquals(Stock.RECEIVED_DATE_REASON, cancelled.cancelReason)
+        assertEquals(cancelled.id, active.single().correctsId)
+        // 5 kun oldingi berish endi «mavjud 0» bilan rad etilmaydi.
+        assertEquals(litres("1"), services.stock.available(id, today.minusDays(5)))
+        issueTo("Biologiya", id, "100", ML, date = today.minusDays(5))
+        assertEquals(ml("900"), services.stock.remainder(id))
+        assertEquals(today.minusDays(10), services.queries.ledger(id).first().movedOn)
+    }
+
+    @Test
+    fun movingTheReceivedDateLaterIsRefusedWhenItWouldMakeEarlierStockNegative() {
+        // Eski jadvaldan: 05.09 da 1000 ml kelgan, omborda 750 ml (250 ml moslash yozuvi o‘sha sanada).
+        val file = tmp.root.toPath().resolve("reaktivlar-jadval.json")
+        java.nio.file.Files.writeString(
+            file,
+            uz.reaktivombor.desktop.SheetStore.toJson(
+                listOf(uz.reaktivombor.desktop.SheetRow(1, "Etil spirti", "", "1000", "ml", "01.09.2027", "750", "", "", createdAt = 10, legacyReceivedAt = "05.09.2026")),
+                "2026-10-20T10:00:00",
+            ),
+        )
+        services.legacy.importFile(file)
+        val id = services.queries.batchRows(today = today).single().batchId
+        val error = assertThrows(UserError::class.java) {
+            services.reagents.updateBatch(id, BatchEdit(series = "", receivedOn = today.minusDays(40), expiresOn = java.time.LocalDate.of(2027, 9, 1)))
+        }
+        assertTrue(error.message, error.fields.containsKey("receivedOn"))
+        assertEquals(java.time.LocalDate.of(2026, 9, 5), services.reagents.batch(id)!!.receivedOn)
+        assertEquals(listOf(java.time.LocalDate.of(2026, 9, 5)), services.queries.receipts(OpFilter(batchId = id)).map { it.receivedOn })
+        assertEquals(ml("750"), services.stock.remainder(id))
+        // Oldinga (ertaroq sanaga) surish mumkin.
+        services.reagents.updateBatch(id, BatchEdit(series = "", receivedOn = java.time.LocalDate.of(2026, 9, 1), expiresOn = java.time.LocalDate.of(2027, 9, 1)))
+        assertEquals(listOf(java.time.LocalDate.of(2026, 9, 1)), services.queries.receipts(OpFilter(batchId = id)).map { it.receivedOn })
+        assertEquals(ml("750"), services.stock.remainder(id))
+        assertTrue(services.queries.ledger(id).all { it.balance >= 0 })
+    }
+
+    @Test
+    fun minimumStockInAnotherDimensionIsRefusedWhenItCanNeverApply() {
+        val error = assertThrows(UserError::class.java) {
+            newBatch("Aseton", "A-1", today.plusDays(100), "100", unit = ML, minStock = "500", minStockUnit = G)
+        }
+        assertTrue(error.message, error.fields.containsKey("minStockText"))
+        assertTrue(error.fields.getValue("minStockText"), error.fields.getValue("minStockText").contains("l yoki ml"))
+        assertEquals(0L, count("batches"))
+        // Reaktivning massa partiyasi bor — hajm partiyasini qo‘shishda grammdagi minimum unga qo‘llanadi.
+        newBatch("Natriy xlorid", "N-1", today.plusDays(100), "1", unit = KG)
+        newBatch("Natriy xlorid", "N-2", today.plusDays(100), "1", unit = L, minStock = "500", minStockUnit = G)
+        val natriy = services.reagents.list().single { it.name == "Natriy xlorid" }
+        assertEquals(G, natriy.minStockUnit)
+
+        val aseton = services.reagents.get(newBatch("Aseton", "A-1", today.plusDays(100), "100", unit = ML).let { row(it).reagentId })!!
+        val refused = assertThrows(UserError::class.java) {
+            services.reagents.updateReagent(aseton.id, ReagentEdit(name = "Aseton", minStockText = "5", minStockUnit = KG))
+        }
+        assertTrue(refused.message, refused.fields.containsKey("minStockText"))
+        services.reagents.updateReagent(aseton.id, ReagentEdit(name = "Aseton", minStockText = "50", minStockUnit = ML))
+        assertEquals(ML, services.reagents.get(aseton.id)!!.minStockUnit)
+
+        // Avvaldan mos kelmaydigan minimum saqlangan bo‘lsa ham reaktivning boshqa maydonlarini tahrirlash mumkin.
+        db.write { it.update("UPDATE reagents SET min_stock = 5000, min_stock_unit = 'g' WHERE id = ?", aseton.id) }
+        services.reagents.updateReagent(aseton.id, ReagentEdit(name = "Aseton", formula = "C3H6O", minStockText = "5", minStockUnit = G))
+        assertEquals("C3H6O", services.reagents.get(aseton.id)!!.formula)
     }
 }

@@ -86,6 +86,34 @@ class QueriesServiceTest : ServiceTestBase() {
     }
 
     @Test
+    fun ledgerBalanceStaysNonNegativeWhenAnIssueIsMovedToAnEarlierDate() {
+        val batch = newBatch("Etil spirti", "ES-001", today.plusDays(200), "100", unit = ML, received = today.minusDays(30))
+        issueTo("Biologiya", batch, "100", ML, date = today.minusDays(10))
+        val item = services.queries.issueItems().single()
+        services.stock.correctIssueItem(item.id, toDepartment(batch, "100", ML, "Biologiya"), today.minusDays(20), "Sana xato")
+        val ledger = services.queries.ledger(batch)
+        // Bekor qilingan berish va uning teskarisi ro‘yxatda qoladi, lekin qoldiqni o‘zgartirmaydi.
+        assertEquals(
+            listOf(MovementKind.RECEIPT, MovementKind.ISSUE, MovementKind.ISSUE, MovementKind.REVERSAL),
+            ledger.map { it.kind },
+        )
+        assertEquals(listOf(ml("100"), 0L, 0L, 0L), ledger.map { it.balance })
+        assertTrue(ledger[2].operationCancelled)
+        assertEquals(services.stock.remainder(batch), ledger.last().balance)
+
+        // Bekor qilib, ertaroq sana bilan qayta kiritish ham.
+        val other = newBatch("Aseton", "A-1", today.plusDays(200), "100", unit = ML, received = today.minusDays(30))
+        issueTo("Gistologiya", other, "60", ML, date = today.minusDays(5))
+        services.stock.cancelIssueItem(services.queries.issueItems(OpFilter(batchId = other)).single().id, "Sana xato")
+        issueTo("Gistologiya", other, "60", ML, date = today.minusDays(15))
+        val second = services.queries.ledger(other)
+        assertTrue(second.map { it.balance }.toString(), second.all { it.balance >= 0 })
+        assertEquals(listOf(ml("100"), ml("40"), ml("40"), ml("40")), second.map { it.balance })
+        // Reaktiv va to‘liq jurnal ham xuddi shunday.
+        assertTrue(services.queries.fullLedger().all { it.balance >= 0 })
+    }
+
+    @Test
     fun departmentSummaryShowsOwnedBatchesAndIssuedTotals() {
         val owned = newBatch("Etil spirti", "ES-001", today.plusDays(200), "5", departmentId = deptId("Sud-kimyo"))
         val other = newBatch("Aseton", "A-1", today.plusDays(200), "1")

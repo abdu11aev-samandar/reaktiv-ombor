@@ -131,4 +131,133 @@ class LegacyImportTest : ServiceTestBase() {
         assertFalse(legacy.isDone())
         assertEquals(1L, count("batches"))
     }
+
+    @Test
+    fun anOutOfRangeOldReceivedDateIsClampedLikeTheCreationDate() {
+        val created = java.time.Instant.parse("2026-09-01T08:00:00Z").toEpochMilli()
+        val phone = """
+            {"format":"reaktiv-ombor","version":1,"reagents":[],"drafts":[
+              {"name":"Aseton","receivedAt":"20.09.99","givenAmount":"500","unit":"ml","expiresAt":"01.06.2027","stockAmount":"400","createdAt":$created},
+              {"name":"Fenol","receivedAt":"01.01.1980","givenAmount":"1","unit":"l","expiresAt":"01.06.2027","stockAmount":"1","createdAt":${created + 1}}
+            ]}
+        """.trimIndent()
+        val result = services.legacy.importFile(writeJson("reaktivlar.json", phone))
+        assertEquals(2, result.imported)
+        val aseton = services.queries.batchRows(today = today).single { it.name == "Aseton" }
+        // 2099 yildagi «kelgan sana» olinmadi: kirim yaratilgan kun bilan, partiyadan bugun berish mumkin.
+        assertNull(aseton.receivedOn)
+        assertEquals(listOf(java.time.LocalDate.of(2026, 9, 1)), services.queries.receipts(OpFilter(batchId = aseton.batchId)).map { it.receivedOn })
+        assertEquals(ml("400"), services.stock.available(aseton.batchId, today))
+        assertTrue(aseton.note, aseton.note.contains("20.09.99"))
+        assertTrue(result.notes.toString(), result.notes.any { it.contains("«Aseton»") && it.contains("bugundan keyin") })
+        issueTo("Biologiya", aseton.batchId, "10", ML)
+        assertEquals(ml("390"), services.stock.remainder(aseton.batchId))
+        val fenol = services.queries.batchRows(today = today).single { it.name == "Fenol" }
+        assertNull(fenol.receivedOn)
+        assertTrue(fenol.note, fenol.note.contains("01.01.1980"))
+        assertTrue(result.notes.toString(), result.notes.any { it.contains("«Fenol»") && it.contains("01.01.1990 dan oldin") })
+    }
+
+    @Test
+    fun theSameRowsFromAnotherFileAreNeverImportedTwice() {
+        val dir = tmp.newFolder("Reaktivlar").toPath()
+        // Eski dastur har saqlashda vaqtni yozadi va oldingi holatni .bak.json ga ko‘chiradi: matn har xil, qatorlar bir xil.
+        val main = dir.resolve(SheetStore.FILE_NAME).also { Files.writeString(it, SheetStore.toJson(version2Rows, "2026-10-20T10:00:00")) }
+        val bak = dir.resolve("reaktivlar-jadval.bak.json").also { Files.writeString(it, SheetStore.toJson(version2Rows, "2026-10-19T18:30:00")) }
+        assertEquals(3, services.legacy.importFile(main).imported)
+        val batches = count("batches")
+        val totals = services.queries.stockTotals(today = today).map { it.remainder }
+        val error = assertThrows(UserError::class.java) { services.legacy.importFile(bak) }
+        assertTrue(error.message, error.message.contains("allaqachon ko‘chirilgan"))
+        assertEquals(batches, count("batches"))
+        assertEquals(totals, services.queries.stockTotals(today = today).map { it.remainder })
+        assertEquals(3L, count("legacy_rows"))
+    }
+
+    @Test
+    fun aVersion1FileAndTheVersion2FileMadeFromItShareRows() {
+        val phone = """
+            {"format":"reaktiv-ombor","version":1,"reagents":[
+              {"name":"Xloroform","receivedAt":"2026-08-10","givenAmount":"500","unit":"ml","expiresAt":"2027-11-05","stockAmount":"320.5","createdAt":5},
+              {"name":"Jelatin","receivedAt":"2026-07-01","givenAmount":"1","unit":"kg","expiresAt":"2027-07-01","stockAmount":"1","createdAt":6}
+            ]}
+        """.trimIndent()
+        // Yangi jadval eski fayldan shu tarzda yaratilgan (1.0.6+ dastur): qatorlar va ularning yaratilgan vaqti saqlanadi.
+        val v2 = writeJson("reaktivlar-jadval.json", SheetStore.toJson(SheetStore.parse(phone).rows, "2026-10-01T09:00:00"))
+        assertEquals(2, services.legacy.importFile(v2).imported)
+        // Eski dastur keyin yana ishlatilgan: bitta yangi yozuv qo‘shilgan.
+        val later = phone.replace(
+            "\n]}",
+            ",\n  {\"name\":\"Aseton\",\"receivedAt\":\"2026-10-10\",\"givenAmount\":\"2\",\"unit\":\"l\",\"expiresAt\":\"2027-10-10\",\"stockAmount\":\"2\",\"createdAt\":7}\n]}",
+        )
+        val result = services.legacy.importFile(writeJson("reaktivlar.json", later))
+        assertEquals(1, result.imported)
+        assertEquals(2, result.alreadyImported)
+        assertTrue(result.notes.toString(), result.notes.count { it.contains("allaqachon ko‘chirilgan") } == 2)
+        assertEquals(listOf("Aseton", "Jelatin", "Xloroform"), services.queries.batchRows(today = today).map { it.name }.sorted())
+        assertEquals(ml("320,5"), services.queries.batchRows(today = today).single { it.name == "Xloroform" }.remainder)
+    }
+
+    @Test
+    fun aNewerOldAppFileNextToTheSpreadsheetIsMentioned() {
+        val dir = tmp.newFolder("Reaktivlar").toPath()
+        val main = dir.resolve(SheetStore.FILE_NAME).also { Files.writeString(it, SheetStore.toJson(version2Rows.take(2), "2026-10-20T10:00:00")) }
+        val old = dir.resolve(SheetStore.LEGACY_FILE_NAME)
+        Files.writeString(old, """{"format":"reaktiv-ombor","version":1,"reagents":[]}""")
+        Files.setLastModifiedTime(main, java.nio.file.attribute.FileTime.fromMillis(1_000_000_000_000L))
+        Files.setLastModifiedTime(old, java.nio.file.attribute.FileTime.fromMillis(2_000_000_000_000L))
+        val legacy = LegacyImport(db, services.audit, services.settings, services.directory, services.reagents, clock, main)
+        val result = legacy.autoImportIfNeeded()!!
+        assertEquals(2, result.imported)
+        assertTrue(result.notes.toString(), result.notes.first().contains(SheetStore.LEGACY_FILE_NAME))
+        val audit = services.queries.auditLogs(AuditFilter(action = AuditAction.LEGACY_IMPORTED)).single { it.entity == "legacy" }
+        assertTrue(audit.details, audit.details.contains(SheetStore.LEGACY_FILE_NAME))
+        // Eski fayl jadvaldan eski bo‘lsa — eslatma yo‘q.
+        Files.setLastModifiedTime(old, java.nio.file.attribute.FileTime.fromMillis(500_000_000_000L))
+        val bak = dir.resolve("reaktivlar-jadval.bak.json").also { Files.writeString(it, SheetStore.toJson(version2Rows, "2026-10-21T10:00:00")) }
+        Files.setLastModifiedTime(bak, java.nio.file.attribute.FileTime.fromMillis(1_000_000_000_000L))
+        assertTrue(services.legacy.importFile(bak).notes.none { it.contains(SheetStore.LEGACY_FILE_NAME) })
+    }
+
+    @Test
+    fun rowsWithoutAUsableUnitAreInferredOrRecordedAndUnmappedValuesAreKept() {
+        val rows = listOf(
+            SheetRow(1, "Ammiak", "", "1", "l", "01.01.2027", "1", createdAt = 10),
+            SheetRow(2, "Ammiak", "", "2", "", "01.02.2027", "2", createdAt = 20), // birlik tanlanmagan
+            SheetRow(3, "Fenol", "", "500", "mg", "01.01.2027", "500", "Biologiya", "", createdAt = 30), // noma’lum birlik
+            SheetRow(4, "Aseton", "2026-13-01", "1", "l", "01.01.2027", "1", "123", "", createdAt = 40, legacyReceivedAt = "sentyabr 2026"),
+        )
+        val result = services.legacy.importFile(writeJson("reaktivlar-jadval.json", SheetStore.toJson(rows, "2026-10-20T10:00:00")))
+        assertEquals(3, result.imported)
+        assertEquals(1, result.skipped)
+        // Ikkinchi «Ammiak» birligi shu nomdagi boshqa qatordan olindi.
+        val ammiak = services.queries.batchRows(today = today).filter { it.name == "Ammiak" }
+        assertEquals(listOf(L, L), ammiak.map { it.unit })
+        assertEquals(litres("3"), ammiak.sumOf { it.remainder })
+        assertTrue(result.notes.toString(), result.notes.any { it.contains("2-qator") && it.contains("«l» olindi") })
+        // «Fenol» o‘tkazib yuborildi, lekin qiymatlari audit jurnalida doimiy saqlandi.
+        val skipped = services.queries.auditLogs(AuditFilter(action = AuditAction.LEGACY_IMPORTED)).single { it.entity == "legacy_row" }
+        listOf("Fenol", "«mg»", "«500»", "Biologiya", "01.01.2027").forEach { assertTrue(skipped.details, skipped.details.contains(it)) }
+        // O‘qib bo‘lmagan sana va bo‘lim — izohda va partiya izohida (yo‘qolmaydi).
+        val aseton = services.queries.batchRows(today = today).single { it.name == "Aseton" }
+        assertNull(aseton.producedOn)
+        assertNull(aseton.departmentId)
+        listOf("2026-13-01", "sentyabr 2026", "123").forEach { assertTrue(aseton.note, aseton.note.contains(it)) }
+        assertTrue(result.notes.toString(), result.notes.any { it.contains("ishlab chiqarilgan sana («2026-13-01») sana emas") })
+        assertTrue(result.notes.toString(), result.notes.any { it.contains("«Kelgan vaqt» («sentyabr 2026») sana emas") })
+        assertTrue(result.notes.toString(), result.notes.any { it.contains("(«123») bo‘lim nomi emas") })
+    }
+
+    @Test
+    fun negativeOrHugeOldAmountsAreNamedCorrectly() {
+        val rows = listOf(
+            SheetRow(1, "Aseton", "", "2000000000", "ml", "01.01.2027", "-5", createdAt = 10),
+            SheetRow(2, "Fenol", "", "abc", "ml", "01.01.2027", "5", createdAt = 20),
+        )
+        val result = services.legacy.importFile(writeJson("reaktivlar-jadval.json", SheetStore.toJson(rows, "2026-10-20T10:00:00")))
+        assertTrue(result.notes.toString(), result.notes.any { it.contains("«Ombordagi miqdor» qiymati («-5») manfiy") })
+        assertTrue(result.notes.toString(), result.notes.any { it.contains("«Kelgan miqdor»") && it.contains("juda katta") })
+        assertTrue(result.notes.toString(), result.notes.any { it.contains("«Kelgan miqdor» qiymati («abc») son emas") })
+        assertTrue(result.notes.none { it.contains("(«-5») son emas") })
+    }
 }

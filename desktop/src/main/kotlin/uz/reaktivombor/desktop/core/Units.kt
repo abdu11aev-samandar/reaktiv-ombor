@@ -26,9 +26,10 @@ enum class MeasureUnit(val code: String, val title: String, val dimension: Dimen
     val siblings: List<MeasureUnit> get() = entries.filter { it.dimension == dimension }
 
     companion object {
-        /** "l", "litr", "ML", "мл", "gr", "гр", "шт", "ta" … → birlik; noma’lum bo‘lsa null. */
+        /** "l", "litr", "ML", "мл", "gr", "гр.", "шт.", "ta" … → birlik; noma’lum bo‘lsa null. */
         fun of(code: String): MeasureUnit? {
-            val text = normalizeUnit(code).removeSuffix(".").trim()
+            // Oxiridagi nuqta qisqartma belgisi ("gr.", "мл.") — avval olib tashlanadi, keyin qisqartma izlanadi.
+            val text = normalizeUnit(code.trim().removeSuffix(".")).trim()
             if (text.isEmpty()) return null
             return entries.firstOrNull { it.code == text }
                 ?: entries.firstOrNull { it.title == text }
