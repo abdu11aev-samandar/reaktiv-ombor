@@ -177,8 +177,9 @@ class HistoryPageUiTest {
         val remainder = services.stock.remainder(ids.es002)
         assertEquals(3_000_000L, remainder)
         assertEquals(remainder, ledger.last().balance)
-        // Har bir qatorda shu harakatdan keyingi qoldiq: 5 l → 3 l → 2,5 l → 3 l.
-        val expected = listOf("5 l", "3 l", "2,5 l", "3 l")
+        // Har bir qatorda shu harakatdan keyingi qoldiq. Bekor qilingan berish va uning bekor qilish qatori qoldiqni
+        // o‘zgartirmaydi (tarixda ko‘rinadi, lekin yig‘indiga kirmaydi): 5 l → 3 l → 3 l → 3 l.
+        val expected = listOf("5 l", "3 l", "3 l", "3 l")
         ledger.zip(expected).forEach { (row, balance) ->
             assertEquals(balance, qtyText(row.balance, row.unit))
             onNode(hasText(balance) and hasAnyAncestor(hasTestTag(ledgerRow(row.movementId)))).assertExists()
