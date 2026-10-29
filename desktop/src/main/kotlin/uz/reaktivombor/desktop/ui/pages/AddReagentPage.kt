@@ -1,5 +1,6 @@
 package uz.reaktivombor.desktop.ui.pages
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -14,6 +15,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -25,6 +28,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -33,6 +37,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.launch
 import uz.reaktivombor.desktop.core.DuplicateBatchError
 import uz.reaktivombor.desktop.core.MeasureUnit
 import uz.reaktivombor.desktop.core.Qty
@@ -128,7 +133,9 @@ private data class AddReagentSaved(val batchId: Long, val reagentId: Long, val t
 /**
  * «Reaktiv qo‘shish»: reaktiv kartasi (texnik topshiriq §3) — yangi partiya va uning boshlang‘ich kirimi.
  * Xatolar maydon yonida; bir xil partiya bo‘lsa — mavjud partiyaga qo‘shimcha kirim taklif qilinadi.
+ * Shakl ostida — «Exceldan import» (AddReagentImport.kt).
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun AddReagentPage(state: AppState) {
     val today = remember { state.today() }
@@ -140,6 +147,9 @@ fun AddReagentPage(state: AppState) {
     // Shakl tozalanganda maydonlar yangidan tuziladi (sana maydonlarining «tegilgan» holati ham tozalansin).
     var generation by remember { mutableIntStateOf(0) }
     val tick = state.refreshTick
+    // Sarlavhadagi «Exceldan import» — pastdagi import bo‘limiga aylantiradi.
+    val importView = remember { BringIntoViewRequester() }
+    val scope = rememberCoroutineScope()
 
     val suggestions = remember(tick, form.name) { state.load(emptyList()) { state.services.reagents.searchNames(form.name, 30) } }
     val allReagents = remember(tick) { state.load(emptyList()) { state.services.reagents.list(includeArchived = true) } }
@@ -206,6 +216,13 @@ fun AddReagentPage(state: AppState) {
         title = Page.ADD_REAGENT.title,
         subtitle = "Yangi partiya va uning boshlang‘ich kirimi. Majburiy maydonlar * bilan belgilangan.",
         actions = {
+            AppButton(
+                "Exceldan import",
+                onClick = { scope.launch { runCatching { importView.bringIntoView() } } },
+                kind = ButtonKind.TEXT,
+                icon = AppIcons.Excel,
+                modifier = Modifier.testTag("add-goto-import"),
+            )
             AppButton("Barcha reaktivlar", onClick = { state.navigate(Page.REAGENTS) }, kind = ButtonKind.SECONDARY, icon = AppIcons.Reagents)
         },
         testTag = "add-reagent",
@@ -324,7 +341,7 @@ fun AddReagentPage(state: AppState) {
             )
             AppButton("Saqlash", onClick = { save() }, icon = AppIcons.Check, enabled = !state.busy, modifier = Modifier.testTag("add-save"))
         }
-        // «Exceldan import» bo‘limi keyingi bosqichda shu yerga qo‘shiladi.
+        AddReagentExcelImport(state, confirm, Modifier.fillMaxWidth().bringIntoViewRequester(importView))
     }
     ConfirmHost(confirm, state.busy)
 }
