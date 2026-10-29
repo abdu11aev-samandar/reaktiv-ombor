@@ -8,8 +8,8 @@ plugins {
 
 group = "uz.reaktivombor"
 // MSI’ning ProductCode’i versiyadan olinadi: bir xil versiyali ikkinchi o‘rnatuvchi birinchisining ustiga o‘rnatilmaydi.
-// Shuning uchun CI har yig‘ishga yangi raqam beradi (-PappVersion=1.0.<run_number>); bu qiymat — mahalliy yig‘ish uchun.
-val appVersion = providers.gradleProperty("appVersion").getOrElse("1.0.0")
+// Shuning uchun CI har yig‘ishga yangi raqam beradi (-PappVersion=2.0.<run_number>); bu qiymat — mahalliy yig‘ish uchun.
+val appVersion = providers.gradleProperty("appVersion").getOrElse("2.0.0")
 version = appVersion
 
 kotlin {
@@ -69,7 +69,7 @@ tasks.withType<org.jetbrains.compose.desktop.application.tasks.AbstractJLinkTask
 // bo‘lmaydi. Yorliq — qo‘shimcha narsa: xato bo‘lsa .desktop faylni o‘zimiz qo‘yamiz (va o‘chiramiz).
 tasks.matching { it.name == "packageDeb" }.configureEach {
     doLast {
-        val desktopFile = "/usr/share/applications/reaktivlar-Reaktivlar.desktop"
+        val desktopFile = "/usr/share/applications/reaktivcontrol-ReaktivControl.desktop"
         val work = temporaryDir.resolve("deb")
         fun run(vararg command: String) {
             val process = ProcessBuilder(*command).inheritIO().start()
@@ -100,11 +100,13 @@ tasks.matching { it.name == "packageDeb" }.configureEach {
                 // Ubuntu 24.04 da yig‘ilgan paket kutubxonalarning yangi nomini (…t64) talab qiladi. Debian 12, Ubuntu 22.04
                 // va Mint 21 da ular eski nom bilan — ikkalasidan biri yetadi.
                 val control = work.resolve("DEBIAN/control")
-                control.writeText(
-                    control.readText().lines().joinToString("\n") { line ->
+                // Eski «reaktivlar» paketi (1.0.x) shu dastur bilan almashtiriladi: ikkalasi birga o‘rnatilib qolmasin.
+                val fields = control.readText().trimEnd().lines()
+                    .filterNot { it.startsWith("Replaces:") || it.startsWith("Conflicts:") }
+                    .map { line ->
                         if (line.startsWith("Depends:")) line.replace(Regex("""\b(lib[a-z0-9.+-]+?)t64\b(?! \|)"""), "$1t64 | $1") else line
-                    },
-                )
+                    }
+                control.writeText((fields + "Replaces: reaktivlar" + "Conflicts: reaktivlar").joinToString("\n") + "\n")
                 run("dpkg-deb", "--build", "--root-owner-group", "-Zxz", work.path, deb.path)
                 logger.lifecycle("Menyu yorlig‘i skriptlari tuzatildi: ${deb.name}")
             }
@@ -117,16 +119,16 @@ compose.desktop {
 
         nativeDistributions {
             targetFormats(TargetFormat.Msi, TargetFormat.Exe, TargetFormat.Deb)
-            packageName = "Reaktivlar"
+            packageName = "ReaktivControl"
             packageVersion = appVersion
-            description = "Laboratoriya reaktivlari hisobi"
-            vendor = "Reaktivlar hisobi"
+            description = "Reaktiv Control — laboratoriya reaktivlari nazorati"
+            vendor = "Reaktiv Control"
             // jdeps/suggestRuntimeModules bo‘yicha: sqlite-jdbc — java.sql; fastexcel-reader (aalto/stax2, commons-compress) —
             // java.xml, java.logging, java.desktop; openpdf — java.desktop. java.naming hech biriga kerak emas.
             modules("java.instrument", "jdk.unsupported", "java.sql", "java.logging", "java.xml", "java.desktop")
 
             windows {
-                menuGroup = "Reaktivlar"
+                menuGroup = "Reaktiv Control"
                 shortcut = true
                 dirChooser = true
                 // Administrator huquqisiz o‘rnatiladi (laboratoriya kompyuterlari uchun qulay).

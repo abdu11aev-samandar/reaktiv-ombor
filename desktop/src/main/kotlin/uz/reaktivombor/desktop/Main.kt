@@ -34,6 +34,7 @@ import java.nio.channels.FileLock
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
+import uz.reaktivombor.desktop.selftest.runSelfTest
 import java.nio.file.StandardOpenOption
 import java.util.logging.Level
 import java.util.logging.Logger
@@ -53,7 +54,12 @@ private val log: Logger = Logger.getLogger("uz.reaktivombor.Main")
 private var instanceLock: FileLock? = null
 
 fun main(args: Array<String>) {
-    // ---- SELF-TEST: bosh muhandis shu yerga "--self-test <fayl>" tarmog‘ini qo‘shadi (UI va qulfdan oldin). ----
+    // O‘zini tekshirish (CI va o‘rnatilgan dastur uchun): oynasiz, vaqtinchalik papkada; foydalanuvchi bazasiga tegmaydi.
+    if (args.firstOrNull() == "--self-test") {
+        val output = args.getOrNull(1)?.let { Paths.get(it) }
+            ?: Paths.get(System.getProperty("java.io.tmpdir"), "reaktiv-control-selftest.txt")
+        exitProcess(runSelfTest(output))
+    }
 
     val dataDir = DataDir.default()
     try {
