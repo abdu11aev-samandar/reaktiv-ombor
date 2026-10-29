@@ -593,6 +593,19 @@ flows, success panel). **Test helpers**: `src/test/.../ui/DemoData.kt` (`DemoDat
 clock 29.10.2026, data described in its KDoc) and `FakeFileDialogs`. Test tags: `nav-<PAGE>`, `page-content`,
 `messages`, `message-<severity>`, tables `<tag>-row-<key>` / `<tag>-group-<key>`, `reagent-actions-<i>`, form fields
 `add-*`, `edit-*`, `filter-*`, dialogs `edit-dialog`, `history-dialog`.
+- **ReceiptsPage** (wave 3, `ReceiptsPage.kt` + shared helpers `ReceiptsIssuesShared.kt`): «Yangi partiya» → ADD_REAGENT;
+  extra-receipt form (batch search picker over non-archived batches, `ReceiptFor` preselects, receiver defaults to
+  `actorName`, `DuplicateOperationError` → confirm → `confirmDuplicate`); table id `receipts` (`queries.receipts`, filters
+  period/text/series/cancelled, `HistoryOf` → batch/reagent filter), status Faol / Faol (tuzatish) / Bekor qilingan + reason /
+  Tuzatilgan; actions Bekor qilish (refused up front with an explanation when `available(batch, receivedOn) < qty`),
+  Tuzatish dialog (`correctReceipt`), Tarix (`BatchHistoryDialog`). Tags `receipt-*`, `receipts-*`, `rc-*`.
+- **IssuesPage** (wave 3, `IssuesPage.kt`, `IssuesLines.kt`, `IssuesHistory.kt`): header + any number of line cards
+  (reagent combo → batch select in `fefoOrder` order with «FEFO tavsiyasi», amber FEFO / red expired notices, live
+  per-batch sum vs `available(batch, date)`, Save disabled while a line is invalid); expired lines confirmed before
+  `issue(…, IssueConfirm(allowExpired))`; Insufficient/Duplicate/Expired errors handled; «FEFO bo‘yicha taqsimlash» dialog
+  (`fefoSplit`); `IssueFrom` prefills line 1. Below: tabs «Berish tarixi» (table id `issue-items`, Qaytarish / Bekor
+  qilish / Tuzatish / Tarix; cancel/correct refused up front while returns exist) and «Qaytarishlar» (id `returns`, Bekor
+  qilish). New rows scroll their table to the top. Tags `issue-*`, `issue-line-<n>-*`, `split-*`, `ret-*`, `ic-*`, `tab-*`.
 
 ## 7. Reports (report/*) — as built
 

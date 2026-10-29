@@ -91,9 +91,11 @@ class PagesUiTest {
             assertTrue("${page.title}: sarlavha", onAllNodesWithText(page.title).fetchSemanticsNodes().size >= 2)
             assertNull("${page.title}: kutilmagan xato", state.unexpectedError)
         }
-        // Keyingi bosqich sahifalari hozircha vaqtinchalik.
+        // «Kirim operatsiyalari» endi haqiqiy sahifa (3-bosqich) — vaqtinchalik matn o‘rnida shakl va jadval.
         onNodeWithTag("nav-RECEIPTS").performClick()
-        onNodeWithText("Bu sahifa keyingi bosqichda to‘ldiriladi").assertExists()
+        waitForIdle()
+        onNodeWithText("Bu sahifa keyingi bosqichda to‘ldiriladi").assertDoesNotExist()
+        onNodeWithTag("receipts-page").assertExists()
     }
 
     @Test
