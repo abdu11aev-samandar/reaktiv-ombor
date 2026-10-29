@@ -594,6 +594,22 @@ clock 29.10.2026, data described in its KDoc) and `FakeFileDialogs`. Test tags: 
 `messages`, `message-<severity>`, tables `<tag>-row-<key>` / `<tag>-group-<key>`, `reagent-actions-<i>`, form fields
 `add-*`, `edit-*`, `filter-*`, dialogs `edit-dialog`, `history-dialog`.
 
+- **DepartmentsPage** (wave 3): left list = `PlacesListPanel` (`DepartmentsDistrictsShared.kt`, shared with districts: add /
+  rename via `NameDialog`, faol/nofaol with confirmation, inactive marked «nofaol»); detail = period + reagent-name filter,
+  cards (owned batches received / issued / remainder per dimension, net issued-to per dimension), tabs «Bo‘limdagi
+  partiyalar» / «Bo‘limga berilgan reaktivlar» (grouped per reagent+dimension with totals) / «Sarf tarixi» (issues + returns),
+  Excel/PDF of `BY_DEPARTMENT`. Read models in `service/PlacesQueries.kt` (reagent filter, department history). Table ids
+  `department-batches`, `department-issued`, `department-history`.
+- **DistrictsPage** (wave 3): same list + «Barcha tumanlar»; cards per district (all) or count/issued/returned/net (one);
+  tabs «Berishlar» (one row per issue item, selection bar → private return dialog → `stock.returnItem`) and «Reaktivlar
+  bo‘yicha jami»; Excel/PDF of `DISTRICTS` with the current filters. Table ids `district-items`, `district-reagents`.
+- **ExpiryPage** (wave 3): state chips with counts (`state-chip-<STATE>`, `state-chip-ALL`; default expired + red + yellow),
+  with-stock only by default, rows sorted by days left, red banner, actions Hisobdan chiqarish (dialog → `stock.writeOff`,
+  reason required, duplicate confirmation) / Arxivlash (confirm) / Arxivdan chiqarish / Tarix. Table id `expiry`.
+- **StockPage** (wave 3): `stockTotals` table (row tint = below min), filters text / below-min / archived / intent reagent;
+  «Partiyalar» dialog (`batchRows(reagentId)` of the row's dimension, own state per batch) and «Minimal qoldiqni belgilash»
+  (`updateReagent` with the other fields unchanged; empty = remove). Table ids `stock`, `stock-batches`.
+
 ## 7. Reports (report/*) — as built
 
 `enum class ReportKind(title, periodLabel: String?, usesSeries, usesDepartment, usesDistrict, needsName)` — 12 kinds,
