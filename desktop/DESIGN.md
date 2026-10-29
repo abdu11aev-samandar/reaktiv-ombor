@@ -649,6 +649,23 @@ clock 29.10.2026, data described in its KDoc) and `FakeFileDialogs`. Test tags: 
 - **ReagentsPage export** (wave 3): header «Eksport: Excel / PDF» → `ReportKind.BATCHES` with the page filters that map
   (selected reagent's name or the search text, series, department, received period); the success message lists the applied
   filter lines and the page filters the report does not support (state, district, expiry, …).
+- **BackupPage (as built, wave 3)**: cards «Zaxira nusxa yaratish» (save dialog, default `reaktiv-control-YYYY-MM-DD-HHmm.db`
+  → `backup.create`, result banner + «Papkani ochish») and «Zaxiradan tiklash» (open .db → `backup.validate` → dialog
+  `restore-dialog` comparing file vs current counts → `backup.restore`; errors say nothing was changed); table `backups`
+  (kind chip, time, name, size, «Tiklash» → same dialog); «Ma’lumotlar joylashuvi» (data / DB + size / `logs` with open
+  buttons, last auto backup + keep count → Settings); «Eski dasturdan ko‘chirish» (found file via `findLegacyFile`, hidden
+  once its hash is imported; pick .json → confirm → `legacy.importFile`; result + all notes dialog). Read models live in
+  `service/BackupQueries.kt` (`databaseInfo()` incl. `sqlite_version()`, `savedTableLayouts()`, `lastLegacyImport()`,
+  `legacyAlreadyImported(path)`); shared bits (`BackupCard`, `BackupInfoLine`, `backupSizeText`) in `BackupPageParts.kt`.
+- **SettingsPage (as built, wave 3)**: «Tashkilot va xodim» (`orgName` + `actorName` saved together in one `db.write`, field
+  errors `orgName` / `actorName`), «Avtomatik zaxira» (`autoBackupKeep`, error key `autoBackupKeep`), read-only expiry
+  thresholds with chips, «Jadval ustunlari» (count + confirm → `resetTableLayouts`), «Dastur haqida» (version, Java, SQLite,
+  OS, data / DB / logs / backups folders). Each section has its own «Saqlash» with a «Saqlandi / Saqlanmagan o‘zgarish bor» mark.
+- **AddReagentPage «Exceldan import» (as built, wave 3)**: `AddReagentImport.kt`, below the form (header button
+  «Exceldan import» scrolls to it): template (save .xlsx), pick (open .xlsx → `excelImport.preview`, nothing written),
+  table `excel-import-preview` (row tint: error red, warning yellow, template example grey), counts «N ta to‘g‘ri, M ta xato»,
+  «Faqat xatoli qatorlar», row details, «Qayta tekshirish»; «Import qilish (N ta)» → confirm when error rows exist →
+  `excelImport.import` (all valid rows in one transaction) → result banner + refresh.
 
 ## 7. Reports (report/*) — as built
 
