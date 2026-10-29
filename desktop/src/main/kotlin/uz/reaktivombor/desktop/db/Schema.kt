@@ -12,7 +12,7 @@ import java.sql.Connection
  * (qisman unique indekslar) — operatsiya ikki marta hisoblanmaydi, bekor qilish ham bir marta.
  */
 object Schema {
-    const val VERSION = 1
+    const val VERSION = 2
 
     /** app_settings.app — bu fayl Reaktiv Control bazasi ekanini bildiradi (zaxirani tekshirishda). */
     const val APP_MARKER = "reaktiv-control"
@@ -339,5 +339,19 @@ object Schema {
         """,
     ).map { it.trimIndent() }
 
-    private val steps: Map<Int, List<String>> = mapOf(1 to v1)
+    /**
+     * 2-versiya: eski jadvaldan ko‘chirilgan qatorlar ro‘yxati (kalit — «createdAt|nom kaliti»). Shu qator boshqa faylda
+     * (.bak.json, reaktivlar.json, qayta saqlangan fayl) yana uchrasa — ikkinchi marta qo‘shilmaydi.
+     */
+    private val v2 = listOf(
+        """
+        CREATE TABLE legacy_rows(
+            key TEXT PRIMARY KEY,
+            imported_at TEXT NOT NULL,
+            source TEXT
+        )
+        """,
+    ).map { it.trimIndent() }
+
+    private val steps: Map<Int, List<String>> = mapOf(1 to v1, 2 to v2)
 }

@@ -25,8 +25,11 @@ class InsufficientStockError(
     message: String,
 ) : UserError(message)
 
-/** Muddati o‘tgan partiyadan berish — alohida tasdiq talab qilinadi. */
-class ExpiredBatchError(val batchId: Long, message: String) : UserError(message)
+/**
+ * Muddati o‘tgan partiyadan berish — alohida tasdiq talab qilinadi. [batchIds] — operatsiyadagi muddati o‘tgan hamma partiyalar
+ * (xabarda har biri nomlanadi, bitta tasdiq hammasini qamraydi); [batchId] — ulardan birinchisi.
+ */
+class ExpiredBatchError(val batchId: Long, message: String, val batchIds: List<Long> = listOf(batchId)) : UserError(message)
 
 /** Xuddi shunday operatsiya hozirgina saqlangan (ikki marta bosilgan bo‘lishi mumkin) — tasdiqlansa saqlanadi. */
 class DuplicateOperationError(message: String) : UserError(message)
