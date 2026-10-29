@@ -118,53 +118,102 @@ Yangilangan APK eski ilova ustidan o‘rnatilishi uchun **har doim bir xil kalit
 
 Kalit topilmasa, APK sinov (debug) kaliti bilan imzolanadi — bunday faylni sinab ko‘rish mumkin, lekin asosiy ilova ustidan yangilanmaydi.
 
-## Windows dasturi
+## Windows dasturi — Reaktiv Control
 
-`desktop/` papkada kompyuter uchun dastur bor (Kotlin, Compose Desktop). Ekrani **Excel jadvaliga o‘xshaydi**, internet kerak emas.
+`desktop/` papkada **Reaktiv Control — Forensic Laboratory Management System** bor: sud-tibbiy ekspertiza laboratoriyalari uchun
+reaktivlar nazorati dasturi (Kotlin, Compose Desktop). Internet kerak emas — hamma narsa kompyuterning o‘zida ishlaydi.
+Texnik topshiriq bo‘yicha arxitektura va qarorlar: [`desktop/DESIGN.md`](desktop/DESIGN.md).
 
-Ustunlar (laboratoriyadagi qog‘oz jadval tartibida): **Reaktiv nomi · Ishlab chiqarilgan vaqti · Kelgan miqdor · O‘lchov birligi** (l, ml, kg, g, dona) **· Yaroqlilik muddati · Ombordagi miqdor · Bo‘lim** (boshida: Gistologiya, Biologiya, Morfologiya — ro‘yxat o‘zgartiriladi) **· Berilgan miqdor · Qoldiq · Qolgan muddat (kun)**.
+### Imkoniyatlar
 
-- **Qoldiq** = Ombordagi miqdor − Berilgan miqdor, **Qolgan muddat** = yaroqlilik muddatigacha qolgan kunlar — ikkalasini dastur o‘zi hisoblaydi (ularga yozilmaydi)
-- Bo‘lim va berilgan miqdor ixtiyoriy, lekin birga yoziladi; berilgan miqdor ombordagidan ko‘p bo‘lishi mumkin emas. Bo‘lim ro‘yxatdan tanlanadi, boshi yetadi (g → Gistologiya)
-- **Bo‘limlar ro‘yxati o‘zgaradi**: katakka ro‘yxatda yo‘q nom yozilsa (masalan, «Kimyo»), u ro‘yxatga qo‘shiladi. **Bo‘limlar** tugmasi — bo‘lim qo‘shish, nomini o‘zgartirish (qatorlarda ham; boshqa bo‘lim nomi berilsa — ikkalasi birlashadi) va yozilmagan bo‘limni olib tashlash. Hammasi Ctrl+Z bilan bekor qilinadi, ro‘yxat jadval bilan birga saqlanadi
-- 1.0.7 dan boshlab bir kompyuterdagi hamma nusxalarni yangilang (eski portable nusxani o‘chiring): 1.0.6 va undan eski dastur bo‘limlar ro‘yxatini bilmaydi — o‘zi saqlaganda ro‘yxatdagi ishlatilmagan bo‘limlar tushib qoladi, «Bio», «Mor» kabi nomlarni esa «Biologiya», «Morfologiya» deb o‘qiydi
-- Muddati 3 oydan ko‘p — nomi yashil, 1–3 oy — sariq, 1 oydan kam (yoki o‘tgan) — nomi va **butun qator qizil**
+Chap menyuda 13 bo‘lim, har biri ishlaydigan sahifa:
 
-- Kataklarga to‘g‘ridan-to‘g‘ri yoziladi (Excel’dagi kabi): **Enter** — keyingi qator (Tab bilan yurilgan bo‘lsa — qator boshidagi ustunga), **Tab** — o‘ngga, strelkalar — yurish, **F2** yoki ikki marta bosish — katakni tahrirlash (yozib turganda F2 yoki katak ichiga bosish — strelkalar matn ichida yuradi), **Esc** — bekor qilish, **Delete** — katakni tozalash
-- Filtr, qidiruv yoki saralash yoqilganda tahrirlangan qator joyida qoladi (ro‘yxat filtr qayta tanlanganda yangilanadi)
-- **Ctrl+Z / Ctrl+Y** — bekor qilish / qayta bajarish, **Ctrl+C / Ctrl+V** — nusxa olish / qo‘yish (Excel’dan bir nechta qatorni birdaniga qo‘yish mumkin), **Ctrl+;** — bugungi sana, **Ctrl+F** — qidiruv, **Ctrl+−** — qatorni o‘chirish
-- Ustun sarlavhasini bosish — saralash (▲/▼), rang bo‘yicha filtr, nom bo‘yicha qidiruv
-- Hali to‘ldirilmagan qator sariq fonda, yetishmayotgan kataklar burchagida qizil belgi — sichqoncha bilan ustiga borilsa sababi chiqadi
-- Har bir o‘zgarish avtomatik saqlanadi: `%APPDATA%\Reaktivlar\reaktivlar-jadval.json` (oldingi holat — `reaktivlar-jadval.bak.json`)
-- **Fayl** menyusi: zaxira faylini ochish (eski jadval va telefon zaxirasi ham), zaxira nusxa saqlash, Excel uchun CSV
-- Excel’dan qo‘yilgan «/» li sanalar kompyuterning mintaqaviy formati bo‘yicha o‘qiladi: «English (United States)» bo‘lsa oy/kun/yil, aks holda kun/oy/yil
-- Windows o‘chirilganda yoki qayta yuklanganda ham yozib turilgan katak saqlanadi
-- Eski jadvaldagi ma’lumotlar (1.0.5 gacha) birinchi ochilishda yangi ustunlarga o‘tkaziladi: eski «Berilgan miqdor» → «Kelgan miqdor»; «Kelgan vaqt» ustuni yo‘q, lekin qiymati faylda saqlanadi va «Ishlab chiqarilgan vaqti» katagida eslatma bo‘lib chiqadi. Eski fayl (`reaktivlar.json`) faqat o‘qiladi va o‘zgarishsiz qoladi — eski dastur yana ochilsa ham yangi jadvalga tegmaydi
-- Kompyuter dasturining jadvali endi telefon ilovasinikidan farq qiladi: telefon yangi faylni ochmaydi (“dasturni yangilang” deydi)
+| Bo‘lim | Nima qiladi |
+|---|---|
+| Bosh sahifa | Reaktiv turlari, faol partiyalar, muddati yaqinlashgan / o‘tgan partiyalar, minimal qoldiqdan kamlar; holat, bo‘limlar va tumanlar diagrammalari; so‘nggi kirim va sarflar — hammasi bazadan |
+| Barcha reaktivlar | Har bir partiya alohida qator; bir xil nomlilar ketma-ket, guruhlanadi (ochib-yopiladi), guruhda umumiy qoldiq; butun qator muddat rangida + holat matni; saralash, qidiruv, barcha filtrlar (kalendar bilan), ustunlarni yashirish / kengligi / tartibi + standart holatga qaytarish; tahrirlash, kirim, berish, tarix, arxivlash |
+| Reaktiv qo‘shish | Reaktiv kartasi (nom avtomatik taklif bilan, formula, ishlab chiqaruvchi, seriya, sanalar, miqdor va birlik, bo‘lim, saqlash joyi, mas’ul, minimal qoldiq, izoh) + Excel shablon orqali import |
+| Kirim operatsiyalari | Yangi partiya yoki mavjud partiyaga qo‘shimcha kirim; kirimlar ro‘yxati; bekor qilish / tuzatish (tarix saqlanadi) |
+| Sarf va berish | Bitta amalda bir nechta reaktivni bir nechta bo‘lim/tumanga berish (bitta tranzaksiya — qisman saqlanmaydi); qoldiq yetmasa saqlanmaydi; FEFO tavsiyasi va boshqa partiya tanlansa ogohlantirish; muddati o‘tgan partiya faqat alohida tasdiq bilan; qaytarish, bekor qilish, tuzatish, hisobdan chiqarish |
+| Bo‘limlar bo‘yicha hisob | Bo‘lim qo‘shish / nomini o‘zgartirish / faol-nofaol; har bo‘lim uchun qabul qilingan, berilgan, joriy qoldiq, partiyalar, sarf tarixi, hisobot |
+| Tumanlarga berilgan reaktivlar | Tumanlar ro‘yxati (yangi nom yozilsa qo‘shiladi); har bir berish alohida; tuman va reaktiv kesimida jami, sanalar, partiyalar va muddatlar; davr bo‘yicha hisobot; qaytarish |
+| Yaroqlilik muddati nazorati | Partiyalar qolgan kun bo‘yicha; holat bo‘yicha filtr; muddati o‘tganlar haqida ogohlantirish; hisobdan chiqarish |
+| Umumiy zaxiralar | Har bir reaktiv nomi bo‘yicha jami (faqat mos birliklar qo‘shiladi: l + ml, kg + g; litr va kilogramm hech qachon qo‘shilmaydi), minimal qoldiq nazorati |
+| Hisobotlar | 12 tur — Excel (.xlsx) va PDF; sana oralig‘i, nom, seriya, bo‘lim, tuman filtrlari; hisobotda yaratilgan vaqt va filtrlar |
+| Operatsiyalar tarixi | Barcha amallar jurnali + har bir reaktiv / partiyaning qoldiqli to‘liq tarixi |
+| Ma’lumotlarni zaxiralash | Zaxira nusxa yaratish, undan tiklash (oldin joriy baza avtomatik saqlanadi), avtomatik nusxalar ro‘yxati, eski dasturdan ko‘chirish |
+| Sozlamalar | Tashkilot nomi (hisobotlarda), xodim nomi, nechta avtomatik nusxa saqlanishi, jadval ustunlarini tiklash, dastur haqida |
+
+Ranglar — aniq kunlar bo‘yicha (qolgan kunlar = yaroqlilik muddati − bugun):
+
+| Rang | Qolgan kun |
+|---|---|
+| 🟢 Yashil — «Yaroqli» | 90 kundan ko‘p |
+| 🟡 Sariq — «1–3 oy qoldi» | 31–90 kun |
+| 🔴 Qizil — «1 oy yoki kam qoldi» | 0–30 kun |
+| ⛔ To‘q qizil — «Muddati o‘tgan» | 0 dan kam (o‘chirilmaydi, ishlatishdan oldin ogohlantiriladi) |
+
+### Ma’lumotlar qayerda saqlanadi
+
+- Baza (SQLite): `%APPDATA%\ReaktivControl\reaktiv-control.db` — dastur papkasidan alohida, yangilanganda yoki dastur boshqa joyga
+  ko‘chirilganda yo‘qolmaydi. Linux: `~/.local/share/reaktiv-control/`.
+- Avtomatik zaxira nusxalar: `…\ReaktivControl\backups\` (kuniga bitta, oxirgi 14 tasi; tiklashdan oldingi nusxalar ham shu yerda).
+- Xatolar jurnali: `…\ReaktivControl\logs\reaktiv-control.0.log`.
+- Har bir amal tranzaksiyada bajariladi; qoldiq faqat harakatlar jurnalidan hisoblanadi (bitta amal ikki marta hisoblanmaydi);
+  xato amal o‘chirilmaydi — bekor qilinadi yoki tuzatiladi, tarix saqlanadi. Baza buzilsa, dastur ochilishda oxirgi zaxiradan tiklashni taklif qiladi.
+- **Oldingi versiyadan (Reaktivlar 1.0.x) o‘tish:** birinchi ochilishda eski jadval (`%APPDATA%\Reaktivlar\reaktivlar-jadval.json`)
+  avtomatik ko‘chiriladi; eski fayl o‘zgartirilmaydi. Bir xil qatorlar ikki marta ko‘chirilmaydi.
 
 ### O‘rnatish
 
-GitHub → **Actions** → «Windows» → oxirgi muvaffaqiyatli ishga tushirish → **Reaktivlar-Windows-msi** artefaktini yuklab oling, ichidagi `.msi` ni oching. Administrator huquqi kerak emas. Har bir yig‘ishning versiyasi yangi (`1.0.<raqam>`), shuning uchun yangisi eskisining ustiga o‘rnatiladi, ma’lumotlar saqlanib qoladi. O‘rnatuvchi ishlamasa: **Reaktivlar-Windows-portable** artefaktini yuklab oling, zip faylni sichqonchaning o‘ng tugmasi bilan bosib **«Извлечь все» / «Extract All»** ni tanlang, so‘ng chiqarilgan `Reaktivlar` papkasidagi `Reaktivlar.exe` ni ishga tushiring. Zip ichidan to‘g‘ridan-to‘g‘ri ishga tushirilsa, dastur ochilmaydi. Windows «noma’lum nashriyotchi» deb ogohlantirsa: **Batafsil → Baribir ishga tushirish**.
+GitHub → **Actions** → «Windows» → oxirgi muvaffaqiyatli ishga tushirish → **ReaktivControl-Windows-msi** artefaktini yuklab oling,
+ichidagi `.msi` ni oching. Administrator huquqi kerak emas. Har yig‘ishning versiyasi yangi (`2.0.<raqam>`), yangisi eskisining (shu
+jumladan eski «Reaktivlar» dasturining) ustiga o‘rnatiladi, ma’lumotlar saqlanib qoladi. O‘rnatuvchi ishlamasa:
+**ReaktivControl-Windows-portable** artefaktini yuklab oling, zip faylni sichqonchaning o‘ng tugmasi bilan bosib
+**«Извлечь все» / «Extract All»** ni tanlang, so‘ng `ReaktivControl` papkasidagi `ReaktivControl.exe` ni ishga tushiring (zip ichidan
+to‘g‘ridan-to‘g‘ri ochilmaydi). Windows «noma’lum nashriyotchi» deb ogohlantirsa: **Batafsil → Baribir ishga tushirish**.
 
-### Linux (Kali, Debian, Ubuntu, Mint)
+Linux (Debian, Ubuntu, Kali, Mint): **ReaktivControl-Linux-deb** artefaktidagi faylni o‘rnating —
+`sudo apt install ./reaktivcontrol_*_amd64.deb` (eski `reaktivlar` paketi almashtiriladi). Menyuda «Ofis» bo‘limida yoki
+`/opt/reaktivcontrol/bin/ReaktivControl`.
 
-GitHub → **Actions** → «Windows» → **Reaktivlar-Linux-deb** artefaktidagi `.deb` faylni o‘rnating:
-
-```bash
-sudo apt install ./reaktivlar_*_amd64.deb
-```
-
-Dastur menyuning «Ofis» bo‘limida chiqadi (yoki `/opt/reaktivlar/bin/Reaktivlar`). Ma’lumotlar: `~/.local/share/reaktivlar/reaktivlar-jadval.json`. O‘chirish: `sudo apt remove reaktivlar` (ma’lumotlar qoladi). Linux’da tizimdan chiqish yoki kompyuterni o‘chirishdan oldin yozib turgan katakda Enter bosing yoki dasturni yoping — aks holda o‘sha katak saqlanmay qolishi mumkin.
-
-### Yig‘ish
+### Yig‘ish va tekshirish
 
 ```bash
 cd desktop
-./gradlew test          # testlar
-./gradlew run           # dasturni ishga tushirish
-./gradlew packageMsi    # Windows o‘rnatuvchisi (faqat Windows’da)
-./gradlew packageDeb    # Linux .deb (Debian/Ubuntu’da; Temurin JDK 17 bilan yig‘ing)
+./gradlew test                 # barcha testlar (Linux va Windows’da CI’da ham)
+./gradlew run                  # dasturni ishga tushirish
+./gradlew createDistributable  # o‘rnatuvchisiz dastur papkasi (build/compose/binaries/main/app/ReaktivControl)
+./gradlew packageMsi           # Windows o‘rnatuvchisi — faqat Windows’da (JDK 17 + WiX avtomatik yuklanadi)
+./gradlew packageDeb           # Linux .deb (Debian/Ubuntu’da)
 ```
+
+Windows’da EXE yig‘ish (o‘z kompyuteringizda): [Temurin JDK 17](https://adoptium.net) ni o‘rnating, repozitoriyni yuklab oling,
+`desktop` papkasida `gradlew.bat packageMsi createDistributable` ni bajaring. Natija: `build\compose\binaries\main\msi\*.msi` va
+`build\compose\binaries\main\app\ReaktivControl\ReaktivControl.exe`.
+
+O‘zini tekshirish: `ReaktivControl.exe --self-test natija.txt` — vaqtinchalik papkada bazani yaratadi, kirim/sarf, bo‘lim va
+tumanlarga berish, qaytarish, bekor qilish, 12 hisobotni Excel va PDF ga, zaxira va tiklashni bajarib, natijani faylga yozadi
+(foydalanuvchi ma’lumotlariga tegmaydi). CI har yig‘ishda buni portable EXE va o‘rnatilgan MSI uchun Windows’da bajaradi.
+Testlar ro‘yxati va natijalari: [`desktop/TEST-RESULTS.md`](desktop/TEST-RESULTS.md).
+
+### Cheklovlar
+
+- Bir kompyuterda bitta foydalanuvchi uchun (tarmoq orqali bir nechta kompyuterdan bitta bazaga yozish yo‘q). Login/parol yo‘q.
+- Dastur tili — o‘zbekcha (lotin).
+- Eski (1.0.x) jadval dasturidagi «Excel kabi» kataklarga yozish o‘rniga endi forma va jadvallar ishlatiladi.
+
+### Kod tuzilishi (desktop/src/main/kotlin/uz/reaktivombor/desktop)
+
+| Paket | Vazifasi |
+|---|---|
+| `core/` | O‘lchov birliklari (aniq butun sonli hisob), muddat ranglari, matn yordamchilari, xatolar, ma’lumotlar papkasi, jurnal |
+| `db/` | SQLite ulanishi, tranzaksiyalar, sxema va migratsiyalar (jadvallar, indekslar, cheklovlar, triggerlar) |
+| `service/` | Reaktivlar va partiyalar, kirim/sarf/qaytarish, bo‘lim va tumanlar, so‘rovlar, audit, sozlamalar, zaxira, eski ma’lumotlarni ko‘chirish, Excel import |
+| `report/` | 12 hisobot turi, Excel va PDF eksport |
+| `ui/` | Mavzu, menyu va yuqori panel, umumiy komponentlar (jadval, kalendar, diagrammalar), 13 sahifa (`ui/pages/`) |
+| `selftest/` | `--self-test` rejimi |
+| `Main.kt` | Ishga tushirish: papka, qulf, jurnal, baza, avtomatik zaxira, oyna |
 
 ## Testlar
 
