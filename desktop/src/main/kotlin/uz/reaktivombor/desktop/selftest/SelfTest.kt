@@ -424,7 +424,8 @@ private class SelfTestRun(private val log: SelfTestLog) {
 
     /** PDF qayta ochiladi: kamida bitta sahifa, sarlavha va o‘zbekcha harflar (o‘, g‘) matnda bor. */
     private fun checkPdf(file: Path, title: String) {
-        val reader = PdfReader(file.toString())
+        // Fayl xotiraga o‘qiladi: nomi bilan ochilsa OpenPDF uni xaritalab (mmap) ochadi va Windows uni o‘chirishga qo‘ymaydi.
+        val reader = PdfReader(Files.readAllBytes(file))
         try {
             expect(reader.numberOfPages >= 1) { "PDF sahifasi yo‘q" }
             val text = PdfTextExtractor(reader).getTextFromPage(1)
@@ -437,9 +438,18 @@ private class SelfTestRun(private val log: SelfTestLog) {
         }
     }
 
+    /** Har bir fayl alohida o‘chiriladi; Windows hali qo‘yib yubormagan fayl bo‘lsa — bir oz kutib, yana bir marta. */
     private fun deleteTree(root: Path) {
-        runCatching {
-            Files.walk(root).use { paths -> paths.sorted(Comparator.reverseOrder()).forEach { Files.deleteIfExists(it) } }
+        repeat(3) { attempt ->
+            if (Files.notExists(root)) return
+            if (attempt > 0) {
+                System.gc()
+                Thread.sleep(300L * attempt)
+            }
+            runCatching {
+                Files.walk(root).use { paths -> paths.sorted(Comparator.reverseOrder()).toList() }
+                    .forEach { path -> runCatching { Files.deleteIfExists(path) } }
+            }
         }
     }
 }
