@@ -37,6 +37,9 @@ import uz.reaktivombor.desktop.core.ExpiryState
 import uz.reaktivombor.desktop.core.MeasureUnit
 import uz.reaktivombor.desktop.core.Qty
 import uz.reaktivombor.desktop.core.UserError
+import uz.reaktivombor.desktop.report.ReportBuilder
+import uz.reaktivombor.desktop.report.ReportFilter
+import uz.reaktivombor.desktop.report.ReportKind
 import uz.reaktivombor.desktop.service.BatchEdit
 import uz.reaktivombor.desktop.service.BatchFilter
 import uz.reaktivombor.desktop.service.BatchRow
@@ -254,6 +257,16 @@ fun ReagentsPage(state: AppState) {
         }
     }
 
+    /** «Eksport»: sahifa filtrlaridan hisobotga o‘tadiganlari bilan «partiyalar bo‘yicha ro‘yxat» (ReportKind.BATCHES). */
+    fun exportBatches(format: ReportsFileFormat) {
+        val mapping = reagentsReportFilter(filters, reagentName)
+        reportsExportFile(
+            state,
+            format,
+            message = { data, file -> reportsSavedText(data, format, file) + ". " + reagentsExportFiltersText(data.filterLines, mapping.skipped) },
+        ) { ReportBuilder(state.services).build(ReportKind.BATCHES, mapping.filter, state.today()) }
+    }
+
     fun actionsFor(row: BatchRow): List<RowAction> {
         val archived = row.archived || row.reagentArchived
         return listOf(
@@ -277,6 +290,8 @@ fun ReagentsPage(state: AppState) {
         title = Page.REAGENTS.title,
         subtitle = "$reagentCount ta reaktiv, ${rows.size} ta partiya" + if (filters.activeCount > 0) " — filtr bo‘yicha" else "",
         actions = {
+            ReportsSaveButtons(onSave = { exportBatches(it) }, enabled = !state.busy, testTagPrefix = "reagents-export", compact = true)
+            Spacer(Modifier.width(4.dp))
             AppButton("Hammasini ochish", onClick = { expansion.expandAll() }, kind = ButtonKind.TEXT, icon = AppIcons.ExpandAll)
             AppButton("Hammasini yopish", onClick = { expansion.collapseAll() }, kind = ButtonKind.TEXT, icon = AppIcons.CollapseAll)
             AppButton("Reaktiv qo‘shish", onClick = { state.navigate(Page.ADD_REAGENT) }, icon = AppIcons.Add)
@@ -321,6 +336,46 @@ fun ReagentsPage(state: AppState) {
     ConfirmHost(confirm, state.busy)
     editBatch?.let { id -> BatchEditDialog(state, id) { editBatch = null } }
     historyBatch?.let { id -> BatchHistoryDialog(state, id) { historyBatch = null } }
+}
+
+/** Sahifa filtrlari → hisobot filtri ([filter]) va hisobotga o‘tmaydigan filtrlar nomlari ([skipped]). */
+private class ReagentsReportMapping(val filter: ReportFilter, val skipped: List<String>)
+
+/**
+ * «Barcha reaktivlar» filtrlari «partiyalar bo‘yicha ro‘yxat» hisobotiga: nom (reaktiv tanlangan bo‘lsa — uning nomi,
+ * aks holda qidiruv matni), seriya, bo‘lim va kelgan sana davri. Hisobotda yo‘q filtrlar [ReagentsReportMapping.skipped] ga.
+ */
+private fun reagentsReportFilter(f: ReagentsPageFilters, reagentName: String?): ReagentsReportMapping {
+    val skipped = mutableListOf<String>()
+    val name = if (f.reagentId != null && reagentName != null) {
+        if (f.text.isNotBlank()) skipped += "qidiruv matni"
+        reagentName
+    } else {
+        f.text.trim().ifEmpty { null }
+    }
+    if (f.districtId != null) skipped += "tuman"
+    if (f.states.isNotEmpty()) skipped += "holat"
+    if (f.producedFrom != null || f.producedTo != null) skipped += "ishlab chiqarilgan sana"
+    if (f.expiresFrom != null || f.expiresTo != null) skipped += "yaroqlilik muddati"
+    if (f.remainderMin.isNotBlank() || f.remainderMax.isNotBlank()) skipped += "joriy qoldiq"
+    if (f.responsible.isNotBlank()) skipped += "mas’ul xodim"
+    if (f.includeArchived) skipped += "arxivdagilar (hisobotda faqat arxivlanmaganlar)"
+    if (!f.includeEmpty) skipped += "tugaganlarni yashirish (hisobotda tugaganlari ham bor)"
+    val filter = ReportFilter(
+        from = f.receivedFrom,
+        to = f.receivedTo,
+        name = name,
+        series = f.series.trim().ifEmpty { null },
+        departmentId = f.departmentId,
+    )
+    return ReagentsReportMapping(filter, skipped)
+}
+
+/** Xabar uchun: "Qo‘llangan filtrlar: Bo‘lim: Gistologiya; Seriya: ES. Hisobotga o‘tmagan filtrlar: holat." */
+private fun reagentsExportFiltersText(filterLines: List<String>, skipped: List<String>): String {
+    val applied = filterLines.filter { it != "Filtr: yo‘q" }
+    val first = if (applied.isEmpty()) "Filtrsiz: barcha arxivlanmagan partiyalar." else "Qo‘llangan filtrlar: " + applied.joinToString("; ") + "."
+    return first + if (skipped.isEmpty()) "" else " Hisobotga o‘tmagan filtrlar: " + skipped.joinToString(", ") + "."
 }
 
 /** Partiyani o‘chirish mumkinmi: yagona operatsiyasi — o‘zining bekor qilinmagan boshlang‘ich kirimi (Reagents.deleteBatch qoidasi). */

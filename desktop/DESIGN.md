@@ -594,6 +594,26 @@ clock 29.10.2026, data described in its KDoc) and `FakeFileDialogs`. Test tags: 
 `messages`, `message-<severity>`, tables `<tag>-row-<key>` / `<tag>-group-<key>`, `reagent-actions-<i>`, form fields
 `add-*`, `edit-*`, `filter-*`, dialogs `edit-dialog`, `history-dialog`.
 
+- **ReportsPage** (as built, wave 3): left list of the 12 `ReportKind`s (title + one-line summary, tags `report-kind-<KIND>`);
+  filter card shows only the kind's fields (period with `periodLabel`, name ComboField — required for HISTORY, series,
+  department without add, district); «Ko‘rish» → `ReportBuilder.build` in `state.run` (field errors `name` / `from` /
+  `departmentId` / `districtId` under the fields); preview = filter lines, org + «Yaratilgan», a `DataTable` with the
+  report's columns (text as in the exports, QTY cells carry the row unit, STATUS chips, rows tinted by state, summary rows
+  bold grey; layout id `report-<kind>`), footer lines, row count; «Filtr o‘zgardi» + «Yangilash» when the filters changed.
+  Save without preview builds first. Shared helpers in `ReportsExport.kt`: `reportsExportFile(state, format, form, onBuilt,
+  message) { build }` (build → `dialogs.save(title, "Kirim-operatsiyalari-2026-10-29.xlsx", ext)` → `ExcelExport`/`PdfExport`
+  → success message with «Papkani ochish»; cancelled dialog = no file, no message), `reportsFileName`, `ReportsSaveButtons`.
+- **HistoryPage** (as built, wave 3): tabs «Amallar jurnali» (`queries.auditLogs(AuditFilter(period, action, text),
+  limit + 1)`, newest first, 100 per page + «Ko‘proq ko‘rsatish», double-click → entry dialog with «Reaktiv tarixini ochish»;
+  layout id `audit-log`) and «Reaktiv tarixi» (reagent ComboField + optional batch → `queries.reagentLedger` / `ledger`
+  grouped per batch with running balance, receipt/issue/return details joined from `queries.receipts/issueItems/returns`
+  (`includeCancelled = true`), cancelled rows «bekor qilingan» + reversal rows «Bekor qilish: …» with the reason; layout id
+  `history-ledger`); Excel/PDF = `ReportKind.HISTORY` for the reagent (+ the batch's series — a substring filter, so the
+  message names other batches whose series contain it). `PageIntent.HistoryOf(batchId, reagentId)` opens the ledger tab.
+- **ReagentsPage export** (wave 3): header «Eksport: Excel / PDF» → `ReportKind.BATCHES` with the page filters that map
+  (selected reagent's name or the search text, series, department, received period); the success message lists the applied
+  filter lines and the page filters the report does not support (state, district, expiry, …).
+
 ## 7. Reports (report/*) — as built
 
 `enum class ReportKind(title, periodLabel: String?, usesSeries, usesDepartment, usesDistrict, needsName)` — 12 kinds,
