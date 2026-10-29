@@ -10,6 +10,7 @@ import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isDialog
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.runDesktopComposeUiTest
 import org.dhatim.fastexcel.reader.ReadableWorkbook
 import org.junit.After
@@ -120,7 +121,7 @@ class AddReagentImportUiTest {
         // 1. Shablon.
         val template = tmp.root.toPath().resolve("shablon.xlsx")
         dialogs.saveAnswer = template
-        onNodeWithTag("import-template").performClick()
+        onNodeWithTag("import-template").performScrollTo().performClick()
         waitForIdle()
         assertEquals("save:reaktivlar-import-shabloni.xlsx", dialogs.calls.last())
         ReadableWorkbook(template.toFile()).use { wb ->
@@ -131,7 +132,7 @@ class AddReagentImportUiTest {
         // 2. To‘ldirilgan fayl → ko‘rib chiqish (bazaga hech narsa yozilmaydi).
         val before = services.queries.batchRows(BatchFilter(includeArchived = true), today).size
         dialogs.openAnswer = filledFile(tmp.root.toPath().resolve("partiyalar.xlsx"), today)
-        onNodeWithTag("import-pick").performClick()
+        onNodeWithTag("import-pick").performScrollTo().performClick()
         waitForIdle()
         assertEquals("open:xlsx", dialogs.calls.last())
         onNodeWithTag("import-counts").assert(hasText("4 ta qator: 2 ta to‘g‘ri, 2 ta xato · 1 ta ogohlantirish"))
@@ -146,16 +147,16 @@ class AddReagentImportUiTest {
         assertTrue(services.directory.departments().none { it.name == "Toksikologiya" })
 
         // Qatorni tanlash — to‘liq xatolar ro‘yxati.
-        onNodeWithTag("import-preview-row-5").performClick()
+        onNodeWithTag("import-preview-row-5").performScrollTo().performClick()
         inside("import-details", "5-qator: Ammiak").assertExists()
         // «Faqat xatoli qatorlar».
-        onNodeWithTag("import-only-errors").performClick()
+        onNodeWithTag("import-only-errors").performScrollTo().performClick()
         onNodeWithTag("import-preview-row-2").assertDoesNotExist()
         onNodeWithTag("import-preview-row-3").assertExists()
-        onNodeWithTag("import-only-errors").performClick()
+        onNodeWithTag("import-only-errors").performScrollTo().performClick()
 
         // 3. Import: xatoli qatorlar bor — avval tasdiq.
-        onNodeWithTag("import-run").assert(hasText("Import qilish (2 ta)")).performClick()
+        onNodeWithTag("import-run").performScrollTo().assert(hasText("Import qilish (2 ta)")).performClick()
         dialogButton("2 ta qatorni import qilish").performClick()
         waitForIdle()
         assertEquals(before + 2, services.queries.batchRows(BatchFilter(includeArchived = true), today).size)
@@ -173,7 +174,7 @@ class AddReagentImportUiTest {
         onNodeWithTag("import-preview").assertDoesNotExist()
 
         // 4. Xuddi shu fayl qayta: qo‘shilganlari endi takror — import qilinadigan qator yo‘q.
-        onNodeWithTag("import-pick").performClick()
+        onNodeWithTag("import-pick").performScrollTo().performClick()
         waitForIdle()
         onNodeWithTag("import-counts").assert(hasText("4 ta qator: 0 ta to‘g‘ri, 4 ta xato"))
         inside("import-preview-row-2", "bazada allaqachon bor").assertExists()
@@ -187,11 +188,11 @@ class AddReagentImportUiTest {
         app()
         val template = tmp.root.toPath().resolve("shablon.xlsx")
         dialogs.saveAnswer = template
-        onNodeWithTag("import-template").performClick()
+        onNodeWithTag("import-template").performScrollTo().performClick()
         waitForIdle()
         val before = services.queries.batchRows(BatchFilter(includeArchived = true), today).size
         dialogs.openAnswer = template
-        onNodeWithTag("import-pick").performClick()
+        onNodeWithTag("import-pick").performScrollTo().performClick()
         waitForIdle()
         onNodeWithTag("import-counts").assert(hasText("1 ta qator: 0 ta to‘g‘ri, 0 ta xato · 1 ta namuna qator (import qilinmaydi)"))
         inside("import-preview-row-2", "Namuna qator").assertExists()
@@ -218,10 +219,10 @@ class AddReagentImportUiTest {
             }
         }
         dialogs.openAnswer = path
-        onNodeWithTag("import-pick").performClick()
+        onNodeWithTag("import-pick").performScrollTo().performClick()
         waitForIdle()
         onNodeWithTag("import-counts").assert(hasText("1 ta qator: 1 ta to‘g‘ri, 0 ta xato"))
-        onNodeWithTag("import-run").performClick()
+        onNodeWithTag("import-run").performScrollTo().performClick()
         waitForIdle()
         assertEquals(250_000L, batches("Eozin").single { it.series == "EO-90" }.remainder)
         onNode(hasText("Ro‘yxatda ko‘rish") and hasAnyAncestor(hasTestTag("import-done"))).performClick()
@@ -233,7 +234,7 @@ class AddReagentImportUiTest {
     fun unreadableFileShowsAnErrorAndNoPreview() = runDesktopComposeUiTest(1366, 768) {
         app()
         dialogs.openAnswer = tmp.root.toPath().resolve("buzuq.xlsx").also { Files.writeString(it, "bu excel emas") }
-        onNodeWithTag("import-pick").performClick()
+        onNodeWithTag("import-pick").performScrollTo().performClick()
         waitForIdle()
         onNodeWithTag("import-preview").assertDoesNotExist()
         inside("message-error", "Bazaga hech narsa yozilmadi.").assertExists()
