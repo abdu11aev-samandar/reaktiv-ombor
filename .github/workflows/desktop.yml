@@ -21,10 +21,16 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # Testlar Linux’da ham, Windows’da ham: SQLite kutubxonasi, shriftlar va fayl yo‘llari ikkalasida tekshiriladi.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     defaults:
       run:
         working-directory: desktop
+        shell: bash
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -34,6 +40,13 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - name: Tests
         run: ./gradlew --no-daemon test
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report-${{ matrix.os }}
+          path: desktop/build/reports/tests/test/
+          if-no-files-found: ignore
 
   deb:
     needs: test
@@ -55,22 +68,25 @@ jobs:
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq fakeroot
           # Teg bo'lsa ham: har yig'ish yagona va o'sib boruvchi versiya oladi (teg faqat release nomi).
-          V="1.0.${{ github.run_number }}"
+          V="2.0.${{ github.run_number }}"
           echo "Versiya: $V"
           ./gradlew --no-daemon packageDeb -PappVersion="$V"
-      - name: Install and remove test
+      - name: Install, self-test and remove
         run: |
           sudo apt-get install -y ./build/compose/binaries/main/deb/*.deb
-          test -x /opt/reaktivlar/bin/Reaktivlar
-          sudo apt-get purge -y reaktivlar
+          test -x /opt/reaktivcontrol/bin/ReaktivControl
+          # O'rnatilgan dasturning o'zi: baza, kirim/sarf, hisobotlar (Excel, PDF), zaxira va tiklash.
+          /opt/reaktivcontrol/bin/ReaktivControl --self-test "$RUNNER_TEMP/selftest-deb.txt" || { cat "$RUNNER_TEMP/selftest-deb.txt"; exit 1; }
+          cat "$RUNNER_TEMP/selftest-deb.txt"
+          sudo apt-get purge -y reaktivcontrol
       - name: Install test on Debian 12 (eski kutubxona nomlari)
         run: |
           docker run --rm -v "$PWD/build/compose/binaries/main/deb:/d" debian:12 \
-            sh -c 'apt-get update -qq && apt-get install -y -qq /d/*.deb && test -x /opt/reaktivlar/bin/Reaktivlar'
+            sh -c 'apt-get update -qq && apt-get install -y -qq /d/*.deb && test -x /opt/reaktivcontrol/bin/ReaktivControl'
       - name: Upload .deb
         uses: actions/upload-artifact@v4
         with:
-          name: Reaktivlar-Linux-deb
+          name: ReaktivControl-Linux-deb
           path: desktop/build/compose/binaries/main/deb/*.deb
           if-no-files-found: error
       - name: Attach to release (desktop-v* tag)
@@ -99,29 +115,53 @@ jobs:
         run: |
           # Har yig'ish yangi versiya: aks holda yangi MSI eskisining ustiga o'rnatilmaydi (Windows Installer 1638).
           # Teg bo'lsa ham: har yig'ish yagona va o'sib boruvchi versiya oladi (teg faqat release nomi).
-          V="1.0.${{ github.run_number }}"
+          V="2.0.${{ github.run_number }}"
           echo "Versiya: $V"
           ./gradlew --no-daemon packageMsi createDistributable -PappVersion="$V"
       - name: Check bundled runtime (no app-local UCRT)
         run: |
-          ls build/compose/binaries/main/app/Reaktivlar/runtime/bin
-          if ls build/compose/binaries/main/app/Reaktivlar/runtime/bin | grep -iE '^(ucrtbase\.dll|api-ms-win-)'; then
+          ls build/compose/binaries/main/app/ReaktivControl/runtime/bin
+          if ls build/compose/binaries/main/app/ReaktivControl/runtime/bin | grep -iE '^(ucrtbase\.dll|api-ms-win-)'; then
             echo "::error::UCRT DLL’lari runtime ichida qolib ketgan"; exit 1
           fi
+      - name: Self-test of the portable EXE
+        shell: pwsh
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP 'selftest-portable.txt'
+          $exe = Resolve-Path 'build/compose/binaries/main/app/ReaktivControl/ReaktivControl.exe'
+          $p = Start-Process -FilePath $exe -ArgumentList @('--self-test', "`"$out`"") -Wait -PassThru
+          if (Test-Path $out) { Get-Content $out -Encoding UTF8 }
+          if ($p.ExitCode -ne 0) { Write-Error "Self-test muvaffaqiyatsiz: $($p.ExitCode)"; exit 1 }
+      - name: Install the MSI, self-test the installed app, uninstall
+        shell: pwsh
+        run: |
+          $msi = (Get-ChildItem 'build/compose/binaries/main/msi/*.msi' | Select-Object -First 1).FullName
+          $log = Join-Path $env:RUNNER_TEMP 'msi-install.log'
+          $p = Start-Process msiexec.exe -ArgumentList @('/i', "`"$msi`"", '/qn', '/l*v', "`"$log`"") -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Get-Content $log -Tail 60; Write-Error "MSI o'rnatilmadi: $($p.ExitCode)"; exit 1 }
+          $exe = Get-ChildItem -Path $env:LOCALAPPDATA, $env:ProgramFiles -Recurse -Depth 3 -Filter 'ReaktivControl.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $exe) { Write-Error "O'rnatilgan ReaktivControl.exe topilmadi"; exit 1 }
+          Write-Host "O'rnatilgan: $($exe.FullName)"
+          $out = Join-Path $env:RUNNER_TEMP 'selftest-installed.txt'
+          $t = Start-Process -FilePath $exe.FullName -ArgumentList @('--self-test', "`"$out`"") -Wait -PassThru
+          if (Test-Path $out) { Get-Content $out -Encoding UTF8 }
+          if ($t.ExitCode -ne 0) { Write-Error "O'rnatilgan dastur self-test'dan o'tmadi: $($t.ExitCode)"; exit 1 }
+          $u = Start-Process msiexec.exe -ArgumentList @('/x', "`"$msi`"", '/qn') -Wait -PassThru
+          if ($u.ExitCode -ne 0) { Write-Error "MSI o'chirilmadi: $($u.ExitCode)"; exit 1 }
       - name: Zip portable app
         shell: pwsh
-        run: Compress-Archive -Path build/compose/binaries/main/app/Reaktivlar -DestinationPath build/Reaktivlar-portable.zip
+        run: Compress-Archive -Path build/compose/binaries/main/app/ReaktivControl -DestinationPath build/ReaktivControl-portable.zip
       - name: Upload MSI
         uses: actions/upload-artifact@v4
         with:
-          name: Reaktivlar-Windows-msi
+          name: ReaktivControl-Windows-msi
           path: desktop/build/compose/binaries/main/msi/*.msi
           if-no-files-found: error
       - name: Upload portable app
         uses: actions/upload-artifact@v4
         with:
-          name: Reaktivlar-Windows-portable
-          # Papkaning o'zi: yuklab olingan zip ichida darhol Reaktivlar\ papkasi (zip ichida zip emas).
+          name: ReaktivControl-Windows-portable
+          # Papkaning o'zi: yuklab olingan zip ichida darhol ReaktivControl\ papkasi (zip ichida zip emas).
           path: desktop/build/compose/binaries/main/app/
           include-hidden-files: true
           if-no-files-found: error
@@ -131,4 +171,4 @@ jobs:
         with:
           files: |
             desktop/build/compose/binaries/main/msi/*.msi
-            desktop/build/Reaktivlar-portable.zip
+            desktop/build/ReaktivControl-portable.zip
