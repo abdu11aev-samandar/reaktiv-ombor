@@ -898,6 +898,9 @@ class Queries(private val db: Database, private val audit: Audit) {
     /** Reaktivning barcha partiyalari harakatlari; qoldiq har bir partiya bo‘yicha alohida. */
     fun reagentLedger(reagentId: Long): List<LedgerRow> = db.read { conn -> loadLedger(conn, "b.reagent_id = ?", reagentId) }
 
+    /** Barcha partiyalar harakatlari (davr hisobotlari uchun); qoldiq har bir partiya bo‘yicha alohida. */
+    fun fullLedger(): List<LedgerRow> = db.read { conn -> loadLedger(conn, "1 = ?", 1L) }
+
     private fun loadLedger(conn: Connection, where: String, id: Long): List<LedgerRow> {
         class Raw(val row: LedgerRow)
         val raws = conn.query(

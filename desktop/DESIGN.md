@@ -33,6 +33,8 @@ desktop/src/main/kotlin/uz/reaktivombor/desktop/
     Text.kt                    cleanName / nameKey helpers (re-use legacy searchKey/cleanName)
     Errors.kt                  UserError (message shown to the user) + specific subclasses
     DataDir.kt                 DataDir.default() + dbFile/backupsDir/logsDir/lockFile (§2)
+    SafeFiles.kt               SafeFiles.write(target) { out -> } — temp file + atomic move, Uzbek UserError if locked
+    Xlsx.kt                    Xlsx.write(out) { workbook -> } — fastexcel writer re-packed as a plain zip (§7)
     Logging.kt                 AppLogging.setup(dataDir), installUncaughtHandler(show), GENERIC_ERROR (§8)
   db/
     Database.kt                connection, transactions, reopen, helpers
@@ -48,7 +50,7 @@ desktop/src/main/kotlin/uz/reaktivombor/desktop/
     Backup.kt                  backup / restore / auto-backup / validation
     LegacyImport.kt            old JSON (reaktivlar-jadval.json, reaktivlar.json) → new DB
     Internal.kt                shared internal helpers (date/text checks, batch info, as-of availability, movements)
-    ExcelImport.kt             batches from an .xlsx template (preview + import) — later wave, not in Services yet
+    ExcelImport.kt             batches from an .xlsx template (template + preview + import) — `Services.excelImport`
   report/
     Reports.kt                 ReportKind, ReportFilter, ReportData, ReportBuilder (12 report types)
     ExcelExport.kt             ReportData → .xlsx (fastexcel)
@@ -288,16 +290,16 @@ date / today; if Ombordagi < that, an ADJUSTMENT movement "Eski jadvaldagi ombor
 «Berilgan miqdor» > 0 → issue item to that department. Rows without a name or with an unknown unit are skipped and
 counted. The old file is never modified. Old department names are added to `departments`.
 
-**ExcelImport**: `template(path)`, `preview(path): List<ImportRow(rowNumber, NewBatch?, errors)>`, `import(rows)`.
+**ExcelImport**: `template(path)`, `preview(path): List<ImportRow(rowNumber, NewBatch?, errors)>`, `import(rows)`
+(as built: §5.5).
 
 ## 5.5 Core as built — exact public API and clarifications (binding for UI / report / import code)
 
 Everything above holds; this section pins down the details the core wave had to decide. Packages:
 `uz.reaktivombor.desktop.core`, `.db`, `.service`.
 
-- **Services**: `Services(db, dataDir, clock)` has `audit, settings, directory, reagents, stock, queries, backup, legacy`
-  and `today()`; `Services.open(dataDir = DataDir.default(), clock)` opens `DataDir.dbFile(dataDir)`.
-  `excelImport` is NOT there yet (ExcelImport is a later wave; add the field then).
+- **Services**: `Services(db, dataDir, clock)` has `audit, settings, directory, reagents, stock, queries, backup, legacy,
+  excelImport` and `today()`; `Services.open(dataDir = DataDir.default(), clock)` opens `DataDir.dbFile(dataDir)`.
 - **Errors**: `open class UserError(message, fields: Map<String,String> = emptyMap())` (+ `UserError(message, field: String?)`).
   Form validation collects all field errors at once: `fields` keys = the input property names (`name`, `series`,
   `receivedOn`, `expiresOn`, `producedOn`, `unit`, `initialQtyText`, `minStockText`, `qtyText`, `date`, `reason`, …);
@@ -355,6 +357,7 @@ Everything above holds; this section pins down the details the core wave had to 
   `Map<Dimension, Long>`, never summed), `Notification(kind, text, target: NotificationTarget{EXPIRY, STOCK}, reagentId,
   batchId?, daysLeft?, counted)`, `notificationCount(today)` (bell = expired + red + below-min), `LedgerRow`,
   `MovementKind(label)`. `reagentTypes` = reagents with at least one non-archived batch.
+  `fullLedger(): List<LedgerRow>` — every batch's movements (date, id order) with per-batch running balance (reports).
 - **Settings**: `var orgName / actorName / autoBackupKeep (1..365) / lastAutoBackup`, `get(key)`, `tableLayout(id)`,
   `setTableLayout(id, json?)` (null = reset), `resetTableLayouts()`. Audit `actor` = `actor_name` setting.
 - **Backup**: `dir`, `create(target): Path`, `autoBackupIfDue(today): Path?` (null when today's already exists),
@@ -368,6 +371,27 @@ Everything above holds; this section pins down the details the core wave had to 
   stock is capped; all legacy operations are dated with the row's receipt date.
 - **Logging**: `AppLogging.setup(dataDir)` installs a UTF-8 `FileHandler` (`logs/reaktiv-control.%g.log`, 1 MB × 5)
   on the root logger; services log only operation ids at INFO.
+- **ExcelImport** (`Services.excelImport`, `ExcelImport(db, audit, directory, reagents, clock)`):
+  - `template(path): Path` — sheet `ExcelImport.SHEET` = «Reaktivlar» with exactly `ExcelImport.HEADERS` in row 1
+    (= `ExcelImport.Column` entries: Reaktiv nomi*, Kimyoviy formula, Ishlab chiqaruvchi, Seriya raqami*, Ishlab chiqarilgan
+    sana, Kelgan sana*, Yaroqlilik muddati*, Kelgan miqdor*, O‘lchov birligi*, Bo‘lim, Saqlash joyi, Mas’ul xodim, Qabul
+    qilgan xodim, Minimal qoldiq, Minimal qoldiq birligi, Izoh; * = required, navy header) + one example row (series
+    `EXAMPLE_SERIES` = `NAMUNA-001`, never imported) + sheet `GUIDE_SHEET` = «Yo‘riqnoma» (rules + one line per column).
+  - `preview(path): List<ImportRow>` — `ImportRow(rowNumber /* Excel row */, input: NewBatch? /* null = example row */,
+    errors: List<String>, warnings: List<String> = [], departmentName: String? /* new department, created on import */)`,
+    `valid = input != null && errors.isEmpty()`. Header row = first of the first 20 rows that has «Reaktiv nomi»; headers
+    match ignoring case, apostrophe variants, spaces, `*`, `:` and `(…)`; a few aliases (Nomi, Seriya, Birlik, Miqdor …);
+    unknown columns ignored; first sheet with the headers wins. Missing required column / unreadable or non-xlsx file →
+    `UserError` naming them. Empty rows skipped. Dates: numeric cells = Excel serial dates (1900/1904), text via
+    `DateText.parse` (dd.MM.yyyy etc.); numbers: numeric cells (Excel float noise rounded at 9 decimals) or text
+    (`1 250,5`); unit via `MeasureUnit.of` (aliases); departments by name key — existing active → `departmentId`, inactive →
+    error, new valid name → `departmentName` + warning. Validation = the real `Reagents.createBatch` run inside ONE write
+    transaction that is always rolled back (nothing persists, no audit), so messages are identical to the form and
+    duplicates are found: exact duplicate (name+series+expiry+unit) of a DB batch or of an earlier row in the same file →
+    error; same name+series with another expiry/unit → warning (imported with `confirmDuplicate = true`).
+  - `import(rows, source: Path? = null): ImportResult(created, skipped)` — all `valid` rows in one transaction (new
+    departments created there); any failure → `UserError("N-qator: … Hech narsa import qilinmadi …")` and nothing is saved;
+    no valid row → `UserError`. Audit `EXCEL_IMPORTED` ("Fayl: …; qo‘shildi: N ta partiya; o‘tkazib yuborildi: M ta qator").
 
 ## 6. UI (Compose Desktop, Material3)
 
@@ -430,20 +454,83 @@ Pages (ui/pages):
 - **SettingsPage**: organisation name (report headers), default staff name, auto-backup count, expiry thresholds shown
   read-only (90 / 30 / 0 days), reset all table layouts, about (version, data folder, DB file size).
 
-## 7. Reports (report/*)
+## 7. Reports (report/*) — as built
 
-`enum class ReportKind(title)`: ALL_REAGENTS «Barcha reaktivlar ro‘yxati», BATCHES «Reaktivlarning partiyalar bo‘yicha
-ro‘yxati», GROUP_TOTALS «Bir xil nomdagi reaktivlarning umumiy qoldig‘i», BY_DEPARTMENT «Bo‘limlar bo‘yicha reaktivlar
-qoldig‘i», DISTRICTS «Tumanlarga berilgan reaktivlar hisoboti», RECEIPTS «Kirim operatsiyalari», ISSUES «Sarf
-operatsiyalari», EXPIRING «Yaroqlilik muddati yaqinlashgan reaktivlar», EXPIRED «Muddati o‘tgan reaktivlar», BELOW_MIN
-«Minimal qoldiqdan kamaygan reaktivlar», MOVEMENT «Davr uchun reaktivlar harakati» (opening balance, receipts, issues,
-returns, write-offs, closing balance per batch), HISTORY «Reaktivning to‘liq operatsiyalar tarixi» (needs a name).
-`ReportFilter(from, to, name, series, departmentId, districtId)`; `ReportData(kind, title, orgName, generatedAt,
-filterLines: List<String>, columns: List<ReportColumn(title, type TEXT|DATE|QTY|INT, width)>, rows: List<ReportRow(cells,
-state: ExpiryState?)>, footerLines)`. Excel: title rows, formatted bold header (navy fill, white text), frozen header,
-column widths, real date cells `dd.mm.yyyy`, numeric quantities `# ##0.###`, status cell filled with its colour.
-PDF: A4 landscape, DejaVu Sans embedded (Identity-H) so `o‘ g‘ ʻ ’` render, title + organisation + "Yaratilgan:" +
-filters, repeating table header, coloured status cells, page numbers.
+`enum class ReportKind(title, periodLabel: String?, usesSeries, usesDepartment, usesDistrict, needsName)` — 12 kinds,
+titles exactly: ALL_REAGENTS «Barcha reaktivlar ro‘yxati», BATCHES «Reaktivlarning partiyalar bo‘yicha ro‘yxati»,
+GROUP_TOTALS «Bir xil nomdagi reaktivlarning umumiy qoldig‘i», BY_DEPARTMENT «Bo‘limlar bo‘yicha reaktivlar qoldig‘i»,
+DISTRICTS «Tumanlarga berilgan reaktivlar hisoboti», RECEIPTS «Kirim operatsiyalari», ISSUES «Sarf operatsiyalari»,
+EXPIRING «Yaroqlilik muddati yaqinlashgan reaktivlar», EXPIRED «Muddati o‘tgan reaktivlar», BELOW_MIN «Minimal qoldiqdan
+kamaygan reaktivlar», MOVEMENT «Davr uchun reaktivlar harakati», HISTORY «Reaktivning to‘liq operatsiyalar tarixi».
+The flags tell the UI which filter fields to show; a filter a kind does not use is ignored (and not listed).
+
+```kotlin
+data class ReportFilter(from: LocalDate? = null, to: LocalDate? = null, name: String? = null, series: String? = null,
+                        departmentId: Long? = null, districtId: Long? = null)
+enum class ReportColumnType { TEXT, DATE, QTY, INT, STATUS }   // cell value: String / LocalDate / BigDecimal / Long / ExpiryState
+data class ReportColumn(title: String, type: ReportColumnType = TEXT, width: Int = 12)   // width = Excel chars, PDF weight
+data class ReportRow(cells: List<Any?>, state: ExpiryState? = null, summary: Boolean = false) // state → row tint; summary → bold grey
+data class ReportData(kind, title, orgName, generatedAt: LocalDateTime, filterLines: List<String>, columns, rows,
+                      footerLines: List<String>) { fun text(row, column): String; val generatedLine /* "Yaratilgan: dd.MM.yyyy HH:mm" */ }
+class ReportBuilder(services: Services) { fun build(kind, filter = ReportFilter(), today = services.today()): ReportData }
+object ReportFormat { cell(type, value), decimal(BigDecimal) /* "1 250,5" */, dateTime(LocalDateTime) }
+object ReportColors { NAVY …; tint(state) /* row */; fill(state) /* status cell */; onFill(state) }
+object ReportFiles { suggestedFileName(data, "xlsx") /* "Muddati o‘tgan reaktivlar 2026-10-29.xlsx" */; writeAtomically(path) { out -> } }
+object ExcelExport { write(data, path): Path; write(data, out); sheetName(title); SHEET_NAME_MAX = 31 }
+object PdfExport { write(data, path): Path; write(data, out) }
+```
+
+Rules (all kinds): quantities are `BigDecimal` in the row's own unit (`Qty.toDecimal`, never exponent notation) with the
+unit in its own «Birlik» column — batch rows use the batch unit, operation rows (receipts, issues, districts) the entered
+unit; totals are only per dimension in footer lines (`Qty.formatTotals`, e.g. "Jami qoldiq: 16,4 l · 750 g"), never a mixed
+number. Name filter = case/apostrophe-insensitive substring of the reagent name; series likewise. Filter lines (Uzbek), in
+this order: "<periodLabel>: 01.10.2026 — 31.10.2026" (or "… dan" / "… gacha"), "Reaktiv: …", "Seriya: …", "Bo‘lim: …",
+"Tuman: …"; "Filtr: yo‘q" when none applies. `from > to` → `UserError` (field `from`); unknown department/district id →
+`UserError`. Row `state` (tint) is set only for batch/stock rows; operation rows have no tint (PDF zebra instead).
+
+| kind | period applies to (`periodLabel`) | rows |
+|---|---|---|
+| ALL_REAGENTS | received date («Kelgan sana») | every non-archived batch, ReagentsPage column order; group total as text "14 l" |
+| BATCHES | received date | batches per reagent+dimension + a `summary` row "Jami: <name> (N ta partiya)" in the group's largest unit |
+| GROUP_TOTALS | — (current state) | per reagent+dimension: batches, with stock, received, issued, written off, remainder, min stock, nearest expiry, worst state |
+| BY_DEPARTMENT | issued-to items («Davr») | per department × reagent+dimension: owned batches' remainder + issued to it (issued/returned/net) |
+| DISTRICTS | issue date | every district issue (entered unit): issued, returned, net, doc, organisation, receiver; per-district footer |
+| RECEIPTS | receipt date | active receipts, type Boshlang‘ich / Qo‘shimcha / Tuzatilgan; department = batch's |
+| ISSUES | issue date | every active issue line incl. write-offs; department/district = recipient |
+| EXPIRING | expiry date | RED + YELLOW batches with stock, by expiry |
+| EXPIRED | expiry date | EXPIRED batches with stock, «O‘tgan kunlar» |
+| BELOW_MIN | — | reagents below min stock: remainder, min, shortfall (in the group unit) |
+| MOVEMENT | ledger date («Davr») | per batch: opening at `from`, receipts, issued, returned, written off, [Moslash only if any], closing at `to`; uses `Queries.fullLedger()`; reversals count under their original operation with the original date |
+| HISTORY | ledger date | needs a name (`UserError` field `name` if blank/unknown/ambiguous; exact name key wins, a single partial match is accepted); every movement (incl. cancelled + reversal rows) with per-batch running balance, entry time, "Keyin bekor qilingan"; with `from`: one `summary` row "Davr boshidagi qoldiq" per batch |
+
+Excel (`ExcelExport`, fastexcel through `core/Xlsx`): row 1 title (bold 14, navy), organisation (if set), "Yaratilgan: …",
+filter lines, blank row, header row (bold white on navy #0B2545, wrapped, thin borders, height from the longest title),
+data rows (thin borders; DATE = real date cell `dd.mm.yyyy`; QTY = number with exact decimals `#,##0` / `#,##0.0…`; INT
+`#,##0`; STATUS = label on the saturated state colour, bold; whole row lightly tinted by `row.state`; `summary` rows bold
+grey), "Ma’lumot topilmadi." when empty, footer lines (bold). Column widths from the spec, header frozen, autofilter over
+header + data, A4 landscape, fit to one page wide, header row repeated, page footer "Reaktiv Control · Sahifa &P / &N".
+Sheet name = title without `[]:*?/\`, edge `'`, max 31 chars. fastexcel's own zip uses Zip64-style data descriptors that
+LibreOffice 24.2 refuses ("source file could not be loaded"); `Xlsx.write` re-packs the workbook as a plain zip (verified:
+LibreOffice converts it, `java.util.zip.ZipInputStream` reads it). Files are written via a temp file + atomic move.
+
+PDF (`PdfExport`, OpenPDF 2.0.5): A4 landscape, DejaVu Sans / Sans Bold from `resources/fonts` embedded as Identity-H
+(o‘ g‘ ’ ʻ render and extract), title, organisation, generation time, filter lines, `PdfPTable` with `headerRows = 1`
+(header repeated on every page), column widths = spec weights widened so no header/cell word is split, coloured status
+cells, tinted rows (others zebra), font 8.5–7 pt by column count, footer lines, page footer "Reaktiv Control · Sahifa N / M".
+
+### 7.1 Self-test (`selftest/SelfTest.kt`, used by CI through `--self-test <file>`; wiring in Main.kt is the lead's)
+
+`fun runSelfTest(output: Path): Int` — sets `java.awt.headless=true` first, runs in a daemon thread with a 50 s limit (never
+hangs), uses a fresh `Files.createTempDirectory("reaktiv-selftest-")` data dir (never the user's data, never the legacy
+auto-import), writes UTF-8 lines as it goes: `# …` environment lines (OS, Java, SQLite version, data dir), then one line
+per step `OK  <step>` / `FAIL <step>: <message>`, finally `# Natija: N/N OK, x s`. Exit code: 0 all OK, 1 a step failed,
+2 timeout/crash, 3 output file not writable. Temp dir deleted on success, kept on failure. Steps (25): DB open + schema +
+seeds; Etil spirti 19 l / 14 l / RED-YELLOW-GREEN; one issue to 4 departments 200/300/150/100 ml; two district issues on
+different dates; insufficient stock rolls back the whole multi-line issue; return; cancel + correct (reversals, audit);
+expiry thresholds 91/90/31/30/0/−1/null; below-min + expired notifications; each of the 12 kinds → .xlsx + .pdf, re-opened
+(fastexcel-reader: title + header row; PdfReader: ≥ 1 page, title, "Yaratilgan:", o‘/g‘); Excel import round-trip from
+`template()`; backup create + validate + restore; legacy JSON written with `SheetStore.toJson` imported; close + reopen keeps
+data (+ `integrity_check`). Linux run: 25/25 in ≈ 1.6 s.
 
 ## 8. Logging, safety
 

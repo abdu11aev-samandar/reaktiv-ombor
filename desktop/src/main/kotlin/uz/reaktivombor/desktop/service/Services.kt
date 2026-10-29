@@ -19,6 +19,7 @@ class Services(val db: Database, val dataDir: Path, val clock: Clock = Clock.sys
     val queries: Queries = Queries(db, audit)
     val backup: Backup = Backup(db, audit, settings, DataDir.backupsDir(dataDir), clock)
     val legacy: LegacyImport = LegacyImport(db, audit, settings, directory, reagents, clock)
+    val excelImport: ExcelImport = ExcelImport(db, audit, directory, reagents, clock)
 
     fun today(): LocalDate = LocalDate.now(clock)
 
