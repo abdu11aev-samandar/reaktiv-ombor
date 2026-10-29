@@ -32,6 +32,8 @@ desktop/src/main/kotlin/uz/reaktivombor/desktop/
     Expiry.kt                  ExpiryState + daysLeft (spec §9 thresholds)
     Text.kt                    cleanName / nameKey helpers (re-use legacy searchKey/cleanName)
     Errors.kt                  UserError (message shown to the user) + specific subclasses
+    DataDir.kt                 DataDir.default() + dbFile/backupsDir/logsDir/lockFile (§2)
+    Logging.kt                 AppLogging.setup(dataDir), installUncaughtHandler(show), GENERIC_ERROR (§8)
   db/
     Database.kt                connection, transactions, reopen, helpers
     Schema.kt                  migrations (PRAGMA user_version), triggers, indexes, seeds
@@ -45,7 +47,8 @@ desktop/src/main/kotlin/uz/reaktivombor/desktop/
     Settings.kt                app_settings typed access (+ table column layouts)
     Backup.kt                  backup / restore / auto-backup / validation
     LegacyImport.kt            old JSON (reaktivlar-jadval.json, reaktivlar.json) → new DB
-    ExcelImport.kt             batches from an .xlsx template (preview + import)
+    Internal.kt                shared internal helpers (date/text checks, batch info, as-of availability, movements)
+    ExcelImport.kt             batches from an .xlsx template (preview + import) — later wave, not in Services yet
   report/
     Reports.kt                 ReportKind, ReportFilter, ReportData, ReportBuilder (12 report types)
     ExcelExport.kt             ReportData → .xlsx (fastexcel)
@@ -287,6 +290,85 @@ counted. The old file is never modified. Old department names are added to `depa
 
 **ExcelImport**: `template(path)`, `preview(path): List<ImportRow(rowNumber, NewBatch?, errors)>`, `import(rows)`.
 
+## 5.5 Core as built — exact public API and clarifications (binding for UI / report / import code)
+
+Everything above holds; this section pins down the details the core wave had to decide. Packages:
+`uz.reaktivombor.desktop.core`, `.db`, `.service`.
+
+- **Services**: `Services(db, dataDir, clock)` has `audit, settings, directory, reagents, stock, queries, backup, legacy`
+  and `today()`; `Services.open(dataDir = DataDir.default(), clock)` opens `DataDir.dbFile(dataDir)`.
+  `excelImport` is NOT there yet (ExcelImport is a later wave; add the field then).
+- **Errors**: `open class UserError(message, fields: Map<String,String> = emptyMap())` (+ `UserError(message, field: String?)`).
+  Form validation collects all field errors at once: `fields` keys = the input property names (`name`, `series`,
+  `receivedOn`, `expiresOn`, `producedOn`, `unit`, `initialQtyText`, `minStockText`, `qtyText`, `date`, `reason`, …);
+  `message` = all messages joined by `\n`. `DuplicateBatchError(existingBatchId, exact: Boolean, message)`:
+  `exact=true` — same name+series+expiry+unit (never creatable; offer an extra receipt); `exact=false` — same name+series
+  with another expiry/unit, saved when `createBatch(input, confirmDuplicate = true)`. Series compare case-insensitively.
+  `InsufficientStockError(batchId, available, requested, unit, message)`, `ExpiredBatchError(batchId, message)`,
+  `DuplicateOperationError(message)`.
+- **Units**: `Dimension(title)`; `MeasureUnit.of(code)`, `of(dimension)`, `largest(units)`, `main(dimension)`, `siblings`.
+  `Qty.parse(text, unit, label = "Miqdor", allowZero = false, field = null)`, `format`, `formatWithUnit`,
+  `formatAuto(base, dimension)` (≥ 1 l → l, else ml), `formatTotals(Map<Dimension, Long>)`, `toDecimal`, `fromDecimal`.
+  `format` is exact: up to 6 decimals for l/kg (never rounds), trailing zeros stripped, grouping with a normal space.
+- **Expiry**: also `daysLeftLabel(days)` ("45", "Bugun tugaydi", "12 kun o‘tgan", "—"), `ExpiryState.severity`
+  (EXPIRED 4 > RED 3 > YELLOW 2 > UNKNOWN 1 > GREEN 0), constants `GREEN_AFTER_DAYS = 90`, `RED_UNTIL_DAYS = 30`.
+- **Text**: `nameKey(raw)`, `matchesQuery(query, vararg values)`, `String.charCount()`, `LocalDate.display()` (dd.MM.yyyy).
+- **Database**: also `isOpen`, `offline { path -> }` (closed connection while the file is replaced; reopens after),
+  `Database.connect(path, readOnly)`; helpers `exec`, `query`, `queryOne`, `queryLong`, `update`, `insert`, ResultSet
+  `str/strOrNull/long/longOrNull/int/bool/date/dateTime/unit/unitOrNull`. A nested `write` is a SAVEPOINT (an inner
+  failure rolls back only the inner part). The DB is migrated on every open; `user_version > Schema.VERSION` → UserError.
+- **Schema additions**: operation rows (`receipts`, `issue_items`, `returns`) may only be updated once, to set
+  `cancelled_at/cancel_reason` (trigger); `issues`, `issue_items`, `returns` can never be deleted; a REVERSAL must be the
+  exact negative of a non-reversal movement of the same batch (trigger `BAD_REVERSAL`). RETURN movements carry both
+  `return_id` and `issue_item_id`; a REVERSAL carries the ids of the movement it reverses. Internal table
+  `ledger_unlock(batch_id)` is the only way to delete movements/receipts (used solely by `deleteBatch`, below).
+- **Dates of reversals**: a REVERSAL is dated with the ORIGINAL operation's date (`created_at` = when cancelled), so
+  period reports and running balances stay consistent after a cancel.
+- **As-of availability**: an issue / cancel-of-receipt / cancel-of-return dated D is allowed only if the balance stays
+  ≥ 0 on D and on every later date (`Stock.available(batchId, date)`; for today it equals the remainder). A backdated
+  issue therefore cannot make an earlier ledger balance negative.
+- **Directory**: `PlaceKind { DEPARTMENT, DISTRICT }`, `list(kind, includeInactive)`, `get(kind, id)`, `add(kind, name)`.
+  Names are stored as typed (cleaned), not re-capitalised. Inactive departments/districts are refused in new issue lines;
+  new names get `sort_order = max + 1`. Seeds: Gistologiya, Biologiya, Sud-kimyo, Morfologiya.
+- **Reagents**: data classes `Reagent`, `Batch`, `NewBatch`, `ReagentEdit`, `BatchEdit` (all nullable dates/units so
+  "missing" is a validation message); also `get(id)`, `batch(id)`, `list(includeArchived)`, `batchesOf(reagentId)`.
+  `createBatch` un-archives an archived reagent of the same name. Archived batch / reagent: no receipts, no issues.
+  **Delete rule ("no history")**: a batch can be deleted only when its only operation is its own initial receipt
+  (no other receipt, issue, return, adjustment or cancellation) — i.e. a just-entered mistake such as a wrong unit;
+  its initial receipt + movement are removed with it (via `ledger_unlock`) and a DELETED audit row keeps the details.
+  A reagent can be deleted only when it has no batches. Everything else → "… tarixi bor — o‘chirib bo‘lmaydi, arxivlang."
+- **Stock**: `RecipientType(label)`; `IssueConfirm.none`; `IssueLine(batchId, qtyText, unit, recipientType,
+  departmentId?, districtId?, districtName?, organization?, receiver?, note?)` — for WRITE_OFF `note` is the (required)
+  reason; `writeOff(batchId, date, qtyText, unit, reason, confirm = IssueConfirm.none)`;
+  `correctIssueItem(id, line, date, reason, confirm = IssueConfirm.none): Long` (new item id, new header with the old
+  doc/issuer/note); `correctReceipt(...)` returns the new receipt id; cancels return Unit; `available(batchId, date)`.
+  Expired = `expires_on < issue date`; write-offs never need the expired confirmation and never set `fefo_override`.
+  FEFO override ignores stock that the same operation already takes from the earlier batch. `fefoOrder` returns only
+  non-archived batches with stock: non-expired by expiry, then no-expiry (old data), then expired. Duplicate guard
+  (120 s, non-cancelled rows): issue line = batch + base qty + recipient + date; receipt = batch + base qty + date.
+- **Queries**: models `BatchRow` (+ `dimension`), `BatchFilter` (+ `reagentId`; `includeEmpty` defaults to **true**;
+  `remainderMin/Max` are base units applied only to rows of `remainderUnit`'s dimension), `StockTotal`,
+  `OpFilter` (+ `batchId`, `reagentId`), `ReceiptRow`, `IssueItemRow` (+ `netQty`, `recipientName` = department /
+  district name or "Hisobdan chiqarish"), `ReturnRow`, `ReagentQtyTotal(+net)`, `DepartmentSummary(department,
+  ownedBatches, issuedTo, history)`, `DistrictSummary(districts: List<DistrictTotal>, perReagent:
+  List<DistrictReagentTotal>, items)`, `Dashboard`, `DepartmentStat`, `DistrictStat` (mixed dimensions are kept as
+  `Map<Dimension, Long>`, never summed), `Notification(kind, text, target: NotificationTarget{EXPIRY, STOCK}, reagentId,
+  batchId?, daysLeft?, counted)`, `notificationCount(today)` (bell = expired + red + below-min), `LedgerRow`,
+  `MovementKind(label)`. `reagentTypes` = reagents with at least one non-archived batch.
+- **Settings**: `var orgName / actorName / autoBackupKeep (1..365) / lastAutoBackup`, `get(key)`, `tableLayout(id)`,
+  `setTableLayout(id, json?)` (null = reset), `resetTableLayouts()`. Audit `actor` = `actor_name` setting.
+- **Backup**: `dir`, `create(target): Path`, `autoBackupIfDue(today): Path?` (null when today's already exists),
+  `list(): List<BackupFile(path, kind: BackupKind{AUTO, PRE_RESTORE, MANUAL}, size, modifiedAt)>`,
+  `validate(path): BackupCheck(userVersion, reagents, batches, movements)` (throws UserError),
+  `restore(path): RestoreResult(preRestoreBackup, check)`; pre-restore file names never overwrite an existing file.
+- **LegacyImport**: `LegacyResult(imported, skipped, notes, file)`, `findLegacyFile()`, `importFile(path)`,
+  `autoImportIfNeeded(): LegacyResult?` (call on startup), `isDone()`. Location override `-Dreaktiv.legacyFile=…`.
+  Idempotency: SHA-256 of the file text in `app_settings.legacy_import_hashes`; `legacy_import` = last import info.
+  Old rows: missing expiry stays NULL (UNKNOWN), an issued amount without a department becomes an ADJUSTMENT, issued >
+  stock is capped; all legacy operations are dated with the row's receipt date.
+- **Logging**: `AppLogging.setup(dataDir)` installs a UTF-8 `FileHandler` (`logs/reaktiv-control.%g.log`, 1 MB × 5)
+  on the root logger; services log only operation ids at INFO.
+
 ## 6. UI (Compose Desktop, Material3)
 
 Window: title `Reaktiv Control — Forensic Laboratory Management System`, min size 1280×720, default 1366×768 or
@@ -380,5 +462,7 @@ not run). Windows: CI runs `./gradlew test` on `windows-latest` too and launches
 
 `packageName = "ReaktivControl"`, `packageVersion = 2.0.<run_number>` (CI) / `2.0.0` local, same `upgradeUuid` (MSI
 upgrades the old "Reaktivlar" install), `modules(...)` must include every JDK module the libraries need (`java.sql`,
-`java.logging`, `java.xml`, `java.naming` if needed — verify with `suggestRuntimeModules`). Deb: package
+`java.logging`, `java.xml`, `java.naming` if needed — verify with `suggestRuntimeModules`). Verified (core wave,
+`suggestRuntimeModules` + `jdeps` on every library jar): `java.instrument, jdk.unsupported, java.sql, java.logging,
+java.xml, java.desktop`; `java.naming` is not needed. Deb: package
 `reaktivcontrol`, `Replaces/Conflicts: reaktivlar`.

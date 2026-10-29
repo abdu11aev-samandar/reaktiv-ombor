@@ -36,6 +36,13 @@ dependencies {
     implementation("org.jetbrains.compose.material:material-icons-core:1.7.3")
     // Android’da org.json tizimning o‘zida bor; kompyuterda alohida kutubxona.
     implementation("org.json:json:20240303")
+    // Ma’lumotlar bazasi — bitta fayl, internetsiz (Windows/Linux/macOS kutubxonalari jar ichida).
+    implementation("org.xerial:sqlite-jdbc:3.50.3.0")
+    // Excel: yozish va o‘qish (Apache POI’siz — yengil).
+    implementation("org.dhatim:fastexcel:0.20.2")
+    implementation("org.dhatim:fastexcel-reader:0.20.2")
+    // PDF hisobotlar (Java 17 bilan ishlaydigan versiya).
+    implementation("com.github.librepdf:openpdf:2.0.5")
 
     testImplementation("junit:junit:4.13.2")
     @OptIn(org.jetbrains.compose.ExperimentalComposeLibrary::class)
@@ -114,7 +121,9 @@ compose.desktop {
             packageVersion = appVersion
             description = "Laboratoriya reaktivlari hisobi"
             vendor = "Reaktivlar hisobi"
-            modules("java.instrument", "jdk.unsupported")
+            // jdeps/suggestRuntimeModules bo‘yicha: sqlite-jdbc — java.sql; fastexcel-reader (aalto/stax2, commons-compress) —
+            // java.xml, java.logging, java.desktop; openpdf — java.desktop. java.naming hech biriga kerak emas.
+            modules("java.instrument", "jdk.unsupported", "java.sql", "java.logging", "java.xml", "java.desktop")
 
             windows {
                 menuGroup = "Reaktivlar"
