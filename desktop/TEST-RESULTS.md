@@ -1,8 +1,12 @@
 # Testlar natijasi — Reaktiv Control
 
-Yaratilgan: 30.10.2026 08:24 · manba: `./gradlew test` (JUnit XML) · tizim: Linux x86_64.
+Yaratilgan: 30.10.2026 · manba: GitHub Actions run #13 (commit `37f51a0`), JUnit XML: **ubuntu-latest** va **windows-latest** (Windows Server 2025, Temurin 17). Har bir test uchun eng yomon natija olingan.
 
-Jami **357** test: 357 o‘tdi, 0 yiqildi, 0 o‘tkazib yuborildi.
+Jami **426** test: 425 o‘tdi, 0 yiqildi, 1 o‘tkazib yuborildi.
+
+O‘tkazib yuborilgan: `BackupServiceTest.restoringFromAReadOnlyBackupLeavesAWritableDatabase` — test POSIX fayl huquqlariga (0444) tayanadi, shuning uchun Windows’da u ataylab o‘tkazib yuboriladi; Linux’da **o‘tdi**. Boshqa testlar ikkala tizimda ham o‘tdi.
+
+Bundan tashqari CI Windows’da haqiqiy o‘rnatilgan MSI va portable EXE’ni `--self-test` bilan sinadi (25 qadamdan 25 tasi OK: kirim/sarf, 12 hisobot Excel+PDF, zaxira, tiklash, eski ma’lumotlarni ko‘chirish).
 
 ## Topshiriqning 18-bandi: majburiy testlar
 
@@ -75,7 +79,7 @@ Jami **357** test: 357 o‘tdi, 0 yiqildi, 0 o‘tkazib yuborildi.
 
 </details>
 
-<details><summary><b>BackupServiceTest</b> — 10/10</summary>
+<details><summary><b>BackupServiceTest</b> — 9/10</summary>
 
 - ✅ o‘tdi `aBackupFromANewerVersionIsRefused`
 - ✅ o‘tdi `aRestoreThatFailsAfterTheSwapRollsBackAndCleansUp`
@@ -84,7 +88,7 @@ Jami **357** test: 357 o‘tdi, 0 yiqildi, 0 o‘tkazib yuborildi.
 - ✅ o‘tdi `createValidateAndRestoreWithAutomaticPreRestoreBackup`
 - ✅ o‘tdi `recoveryWithoutAValidBackupChangesNothing`
 - ✅ o‘tdi `restoreStillWorksWhenTheLiveDatabaseIsCorrupted`
-- ✅ o‘tdi `restoringFromAReadOnlyBackupLeavesAWritableDatabase`
+- ⏭ o‘tkazib yuborildi `restoringFromAReadOnlyBackupLeavesAWritableDatabase`
 - ✅ o‘tdi `startupRecoveryUsesTheNewestValidBackupAndKeepsTheBrokenFile`
 - ✅ o‘tdi `whenTheRollbackItselfFailsTheOldDataIsKeptAndItsLocationIsReported`
 
@@ -155,12 +159,13 @@ Jami **357** test: 357 o‘tdi, 0 yiqildi, 0 o‘tkazib yuborildi.
 
 </details>
 
-<details><summary><b>ExcelExportTest</b> — 5/5</summary>
+<details><summary><b>ExcelExportTest</b> — 6/6</summary>
 
 - ✅ o‘tdi `emptyReportAndRewritingAnExistingFile`
 - ✅ o‘tdi `headerIsFrozenFilteredStyledAndTheZipIsStandard`
 - ✅ o‘tdi `sheetNamesAreSanitised`
 - ✅ o‘tdi `syntheticDataWithEveryColumnType`
+- ✅ o‘tdi `textCellsWrapInsideTheirColumn`
 - ✅ o‘tdi `writesTitleHeaderDatesNumbersAndUzbekText`
 
 </details>
@@ -201,6 +206,47 @@ Jami **357** test: 357 o‘tdi, 0 yiqildi, 0 o‘tkazib yuborildi.
 
 </details>
 
+<details><summary><b>FinalFixesScreenshotTest</b> — 11/11</summary>
+
+- ✅ o‘tdi `bellWithManyNotifications`
+- ✅ o‘tdi `collapsedGroups1280`
+- ✅ o‘tdi `collapsedGroups1366`
+- ✅ o‘tdi `dashboard1280`
+- ✅ o‘tdi `dashboard1366`
+- ✅ o‘tdi `inactiveDepartmentInTheFilter`
+- ✅ o‘tdi `ledgerWithALongName`
+- ✅ o‘tdi `longComboSuggestion`
+- ✅ o‘tdi `reagentsQuantityTooltipHeader`
+- ✅ o‘tdi `reportsInvalidPeriodDate`
+- ✅ o‘tdi `unsavedChangesDialog`
+
+</details>
+
+<details><summary><b>FinalFixesUiTest</b> — 20/20</summary>
+
+- ✅ o‘tdi `aLongReagentNameDoesNotSqueezeTheLedgerSummary`
+- ✅ o‘tdi `aMinimumTheUserTypesIsStillSaved`
+- ✅ o‘tdi `aNarrowQuantityColumnCutsTheNumberWithAnEllipsisInsteadOfWrappingAtTheThousandsSpace`
+- ✅ o‘tdi `anInvalidTypedPeriodDateBlocksThePreviewAndTheSave`
+- ✅ o‘tdi `changingTheBatchUnitDimensionDoesNotOverwriteTheMinimum`
+- ✅ o‘tdi `clearFiltersAlsoClearsInvalidTypedDatesAndCountsThemAsActive`
+- ✅ o‘tdi `collapsedGroupHeaderKeepsEveryChipAt1280`
+- ✅ o‘tdi `collapsedGroupHeaderKeepsEveryChipAt1366`
+- ✅ o‘tdi `comboSuggestionsAreWiderThanTheFieldAndLongNamesStayReadable`
+- ✅ o‘tdi `departmentChartIsSortedWithoutZeroRowsAndLinksToTheRest`
+- ✅ o‘tdi `donutLegendKeepsAllFiveRowsBesideTheRingAt1280`
+- ✅ o‘tdi `donutLegendKeepsAllFiveRowsBesideTheRingAt1366`
+- ✅ o‘tdi `everyOtherPageFilterIsDescribedInTheExport`
+- ✅ o‘tdi `inactiveDepartmentsAreListedInFiltersButNotInForms`
+- ✅ o‘tdi `issuedColumnExplainsItIsNetOfReturnsAndTheEmptyCheckboxesShareOneName`
+- ✅ o‘tdi `searchTextExportsAsASearchLineAndWritesTheRowsOnScreen`
+- ✅ o‘tdi `theBellAndTheOtherFormsAreGuardedToo`
+- ✅ o‘tdi `theBellCapsItsListAndPointsToTheRest`
+- ✅ o‘tdi `theSearchFieldWaitsForTheTypingToStopBeforeQuerying`
+- ✅ o‘tdi `unsavedAddReagentFormAsksBeforeLeavingAndTheCurrentItemDoesNothing`
+
+</details>
+
 <details><summary><b>HistoryPageUiTest</b> — 9/9</summary>
 
 - ✅ o‘tdi `auditEntryDialogOpensTheBatchLedger`
@@ -234,8 +280,18 @@ Jami **357** test: 357 o‘tdi, 0 yiqildi, 0 o‘tkazib yuborildi.
 
 </details>
 
-<details><summary><b>LegacyImportTest</b> — 11/11</summary>
+<details><summary><b>LeaveGuardTest</b> — 4/4</summary>
 
+- ✅ o‘tdi `aFailingGuardNeverBlocksNavigation`
+- ✅ o‘tdi `dirtyFormWaitsForConfirmation`
+- ✅ o‘tdi `forcedNavigationSkipsTheQuestionAndStaleGuardsAreNotRemovedByOthers`
+- ✅ o‘tdi `withoutAGuardNavigationIsImmediate`
+
+</details>
+
+<details><summary><b>LegacyImportTest</b> — 12/12</summary>
+
+- ✅ o‘tdi `aCappedIssuedAmountIsKeptAndEveryNoteIsStoredPermanently`
 - ✅ o‘tdi `aNewerOldAppFileNextToTheSpreadsheetIsMentioned`
 - ✅ o‘tdi `aVersion1FileAndTheVersion2FileMadeFromItShareRows`
 - ✅ o‘tdi `anOutOfRangeOldReceivedDateIsClampedLikeTheCreationDate`
@@ -260,6 +316,32 @@ Jami **357** test: 357 o‘tdi, 0 yiqildi, 0 o‘tkazib yuborildi.
 - ✅ o‘tdi `startupWithoutTheSqliteLibraryNamesTheLibraryAndTouchesNoFiles`
 - ✅ o‘tdi `unwritableTempIsRedirectedAndUnusableFoldersFallBackOrGiveUp`
 - ✅ o‘tdi `userFolderNamesAreAsciiAndDistinct`
+
+</details>
+
+<details><summary><b>OpsStatusAndPlacesScreenshotTest</b> — 7/7</summary>
+
+- ✅ o‘tdi `duplicateReturnConfirmations`
+- ✅ o‘tdi `inactiveDistrictAndDepartmentFilter`
+- ✅ o‘tdi `issuesCancelled1280`
+- ✅ o‘tdi `issuesCancelled1366`
+- ✅ o‘tdi `placesLabelsAndLargeQuantities`
+- ✅ o‘tdi `receiptsCancelled1280`
+- ✅ o‘tdi `receiptsCancelled1366`
+
+</details>
+
+<details><summary><b>OpsStatusAndPlacesUiTest</b> — 9/9</summary>
+
+- ✅ o‘tdi `aRepeatedDistrictReturnAsksForConfirmationAndThenSaves`
+- ✅ o‘tdi `aRepeatedIssueHistoryReturnAsksForConfirmationAndThenSaves`
+- ✅ o‘tdi `anInactiveDistrictIsNotPromisedAsNewAndIsNotSaved`
+- ✅ o‘tdi `cancelledIssueItemsAndReturnsAreMarkedInTheVisibleColumns`
+- ✅ o‘tdi `inactiveDistrictCheckUsesTheServiceNameKey`
+- ✅ o‘tdi `issueHistoryDepartmentFilterListsInactiveDepartments`
+- ✅ o‘tdi `largeQuantitiesStayOnOneLine`
+- ✅ o‘tdi `netIssuedValuesAreLabelledSofBerilgan`
+- ✅ o‘tdi `receiptsShowTheExpiryAndMarkCancelledAndCorrectedRows`
 
 </details>
 
@@ -341,10 +423,13 @@ Jami **357** test: 357 o‘tdi, 0 yiqildi, 0 o‘tkazib yuborildi.
 
 </details>
 
-<details><summary><b>QueriesServiceTest</b> — 7/7</summary>
+<details><summary><b>QueriesServiceTest</b> — 10/10</summary>
 
 - ✅ o‘tdi `batchFiltersWorkOnEveryParameter`
+- ✅ o‘tdi `batchRowsAndStockTotalsShowReturnedNextToNetIssued`
+- ✅ o‘tdi `belowMinimumComparesTheMinimumWithNonExpiredStock`
 - ✅ o‘tdi `dashboardCounts`
+- ✅ o‘tdi `dashboardRecentOperationsAreOrderedByOperationDate`
 - ✅ o‘tdi `departmentSummaryShowsOwnedBatchesAndIssuedTotals`
 - ✅ o‘tdi `ledgerBalanceStaysNonNegativeWhenAnIssueIsMovedToAnEarlierDate`
 - ✅ o‘tdi `ledgerShowsARunningBalancePerBatch`
@@ -355,18 +440,22 @@ Jami **357** test: 357 o‘tdi, 0 yiqildi, 0 o‘tkazib yuborildi.
 
 <details><summary><b>ReagentsExportUiTest</b> — 3/3</summary>
 
-- ✅ o‘tdi `excelExportUsesThePageFiltersAndSaysWhichApplied`
+- ✅ o‘tdi `excelExportWritesTheRowsOnScreenAndEveryFilter`
 - ✅ o‘tdi `pdfExportWithoutFiltersListsEveryBatch`
 - ✅ o‘tdi `selectedReagentBecomesTheNameFilter`
 
 </details>
 
-<details><summary><b>ReagentsServiceTest</b> — 18/18</summary>
+<details><summary><b>ReagentsServiceTest</b> — 23/23</summary>
 
+- ✅ o‘tdi `aBatchEnteredOnAnEarlierDayIsNotDeletedEvenWithoutOtherOperations`
+- ✅ o‘tdi `aReagentWithStockIsNotArchived`
 - ✅ o‘tdi `archivedBatchLeavesTheGroupTotalAndCannotBeUsed`
 - ✅ o‘tdi `changingTheBatchReceivedDateMovesTheInitialReceipt`
 - ✅ o‘tdi `deleteIsAllowedOnlyWithoutHistory`
+- ✅ o‘tdi `deletingOneOfSeveralBatchesKeepsTheReagent`
 - ✅ o‘tdi `differentExpiriesAreSeparateBatchesWithTheirOwnState`
+- ✅ o‘tdi `editAuditKeepsOldAndNewValues`
 - ✅ o‘tdi `exactDuplicateBatchIsRefusedAndPointsToTheExistingBatch`
 - ✅ o‘tdi `groupTotalOfTheEtilSpirtiExample`
 - ✅ o‘tdi `invalidDatesAreRefused`
@@ -380,6 +469,7 @@ Jami **357** test: 357 o‘tdi, 0 yiqildi, 0 o‘tkazib yuborildi.
 - ✅ o‘tdi `rowsOfTheSameNameAreAdjacentAndOrderedByExpiry`
 - ✅ o‘tdi `sameNameDifferentSeriesCreatesSeparateBatches`
 - ✅ o‘tdi `sameSeriesWithAnotherExpiryNeedsConfirmation`
+- ✅ o‘tdi `theReceivedDateCannotMoveAfterAnExtraReceipt`
 - ✅ o‘tdi `updateBatchChangesDescriptiveFieldsOnly`
 
 </details>
@@ -437,8 +527,11 @@ Jami **357** test: 357 o‘tdi, 0 yiqildi, 0 o‘tkazib yuborildi.
 
 </details>
 
-<details><summary><b>ReportsTest</b> — 11/11</summary>
+<details><summary><b>ReportsTest</b> — 17/17</summary>
 
+- ✅ o‘tdi `allReagentsQuantitiesAddUp`
+- ✅ o‘tdi `belowMinUsesNonExpiredStock`
+- ✅ o‘tdi `buildBatchesFormatsExactlyTheGivenRows`
 - ✅ o‘tdi `byDepartmentShowsOwnedRemainderAndIssuedTotals`
 - ✅ o‘tdi `decimalFormattingAndSuggestedFileName`
 - ✅ o‘tdi `etilSpirtiNumbers`
@@ -447,7 +540,10 @@ Jami **357** test: 357 o‘tdi, 0 yiqildi, 0 o‘tkazib yuborildi.
 - ✅ o‘tdi `filtersAreAppliedAndDescribed`
 - ✅ o‘tdi `historyListsEveryOperationWithARunningBalance`
 - ✅ o‘tdi `historyWithoutANameIsRefused`
+- ✅ o‘tdi `issuesWithBothDepartmentAndDistrictMeanEither`
+- ✅ o‘tdi `longTextColumnsAreWideEnough`
 - ✅ o‘tdi `movementShowsOpeningFlowsAndClosingPerBatch`
+- ✅ o‘tdi `periodReportsCountReturnsLikeTheMovementReport`
 - ✅ o‘tdi `quantitiesStayInTheRowUnitAndTotalsNeverMixDimensions`
 - ✅ o‘tdi `reportTitlesAreTheUzbekTitlesOfTheSpecification`
 
@@ -519,9 +615,11 @@ Jami **357** test: 357 o‘tdi, 0 yiqildi, 0 o‘tkazib yuborildi.
 
 </details>
 
-<details><summary><b>StockServiceTest</b> — 23/23</summary>
+<details><summary><b>StockServiceTest</b> — 25/25</summary>
 
 - ✅ o‘tdi `aReturnIntoAnArchivedBatchUnarchivesIt`
+- ✅ o‘tdi `anExtraReceiptCannotBeDatedBeforeTheBatchArrived`
+- ✅ o‘tdi `anInactiveDistrictTypedByNameIsRefusedAndStaysInactive`
 - ✅ o‘tdi `cancelAndCorrectKeepHistoryAndRecomputeTheRemainder`
 - ✅ o‘tdi `cancellingAReceiptThatWouldMakeStockNegativeIsRefused`
 - ✅ o‘tdi `cancellingAnIssueWithActiveReturnsIsRefused`
