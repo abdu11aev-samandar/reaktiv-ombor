@@ -111,6 +111,7 @@ internal fun BackupInfoLine(
     openIcon: ImageVector = AppIcons.Folder,
     onOpen: (() -> Unit)? = null,
     testTag: String? = null,
+    openTestTag: String? = null,
 ) {
     Row(
         modifier.fillMaxWidth().heightIn(min = 36.dp).let { if (testTag != null) it.testTag(testTag) else it },
@@ -124,7 +125,13 @@ internal fun BackupInfoLine(
         }
         if (onOpen != null) {
             Spacer(Modifier.width(8.dp))
-            AppButton(openLabel, onClick = onOpen, kind = ButtonKind.TEXT, icon = openIcon)
+            AppButton(
+                openLabel,
+                onClick = onOpen,
+                kind = ButtonKind.TEXT,
+                icon = openIcon,
+                modifier = if (openTestTag != null) Modifier.testTag(openTestTag) else Modifier,
+            )
         }
     }
 }

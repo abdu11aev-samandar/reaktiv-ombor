@@ -83,6 +83,9 @@ private class BackupRestored(val source: Path, val preRestore: Path, val check: 
 private val BACKUP_FILE_STAMP: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd-HHmm")
 private const val BACKUP_ERROR_KEY = "backup-page-error"
 
+/** Oxirgi ko‘chirishning barcha izohlari (app_settings, har qatorda bittadan) — ishga tushishdagi xabar yopilgach ham ko‘rinsin. */
+private const val LEGACY_NOTES_SETTING = "legacy_import_notes"
+
 /** Zaxira nusxa turi — jadvalda va tasdiq oynasida. */
 private val BackupKind.title: String
     get() = when (this) {
@@ -119,6 +122,9 @@ fun BackupPage(state: AppState) {
     val keep = remember(tick) { state.load(Settings.DEFAULT_AUTO_BACKUP_KEEP) { services.settings.autoBackupKeep } }
     val legacyFile = remember(tick) { state.load(null) { services.legacy.findLegacyFile() } }
     val legacyLast = remember(tick) { state.load(null) { queries.lastLegacyImport() } }
+    val legacyLastNotes = remember(tick) {
+        state.load(emptyList()) { services.settings.get(LEGACY_NOTES_SETTING).orEmpty().lines().map { it.trim() }.filter { it.isNotEmpty() } }
+    }
     // Topilgan fayl allaqachon ko‘chirilgan bo‘lsa — «Topilgan faylni ko‘chirish» ko‘rsatilmaydi (baribir rad etiladi).
     val legacyFileDone = remember(tick, legacyFile) { legacyFile?.let { f -> state.load(false) { queries.legacyAlreadyImported(f) } } ?: false }
     var created by remember { mutableStateOf<BackupCreated?>(null) }
@@ -326,6 +332,7 @@ fun BackupPage(state: AppState) {
                 lastImport = legacyLast?.let { info ->
                     listOfNotNull(info.at?.let { dateTimeText(it) }, info.fileName.ifBlank { null }).joinToString(" — ")
                 },
+                lastNotes = legacyLastNotes,
                 result = legacyResult,
                 onPick = { pickLegacy() },
                 onImportFound = { legacyFile?.let { importLegacy(it) } },
@@ -471,7 +478,9 @@ private fun BackupLegacyCard(
     onImportFound: () -> Unit,
     onDismissResult: () -> Unit,
     modifier: Modifier,
+    lastNotes: List<String> = emptyList(),
 ) {
+    var showLastNotes by remember { mutableStateOf(false) }
     BackupCard(
         "Eski dasturdan ko‘chirish",
         modifier,
@@ -482,7 +491,19 @@ private fun BackupLegacyCard(
             "Fayldagi reaktivlar yangi bazaga partiya sifatida qo‘shiladi; eski fayl o‘zgartirilmaydi. Bir fayl ikki marta " +
                 "ko‘chirilmaydi — qayta tanlansa, rad etiladi.",
         )
-        if (lastImport != null) BackupInfoLine("Oxirgi ko‘chirish", lastImport, testTag = "backup-legacy-last")
+        if (lastImport != null) {
+            // Izohlar — shu yerda ham (ishga tushishdagi xabar yopilgandan keyin). Hozirgina ko‘chirilgan bo‘lsa — natijada bor.
+            val notesHere = lastNotes.isNotEmpty() && result == null
+            BackupInfoLine(
+                "Oxirgi ko‘chirish",
+                lastImport,
+                openLabel = "Izohlar (${lastNotes.size} ta)",
+                openIcon = AppIcons.Document,
+                onOpen = if (notesHere) ({ showLastNotes = true }) else null,
+                testTag = "backup-legacy-last",
+                openTestTag = "backup-legacy-last-notes",
+            )
+        }
         if (legacyFile != null) {
             BackupInfoLine(
                 "Shu kompyuterda topilgan eski fayl" + if (legacyFileDone) " — allaqachon ko‘chirilgan" else "",
@@ -498,6 +519,9 @@ private fun BackupLegacyCard(
             }
             AppButton("JSON faylni tanlash…", onClick = onPick, kind = ButtonKind.SECONDARY, icon = AppIcons.Upload, enabled = !busy, modifier = Modifier.testTag("backup-legacy-pick"))
         }
+    }
+    if (showLastNotes) {
+        LegacyNotesDialog("${lastImport.orEmpty()} — ${lastNotes.size} ta izoh", lastNotes) { showLastNotes = false }
     }
 }
 
@@ -532,22 +556,28 @@ private fun BackupLegacyResult(result: LegacyResult, onDismiss: () -> Unit) {
         }
     }
     if (showNotes) {
-        AppDialog(
-            title = "Ko‘chirish izohlari",
-            subtitle = "${result.file?.fileName ?: ""} — ${result.notes.size} ta izoh",
-            onDismiss = { showNotes = false },
-            width = 760.dp,
-            testTag = "legacy-notes-dialog",
-            buttons = { AppButton("Yopish", onClick = { showNotes = false }) },
-        ) {
-            val scroll = rememberScrollState()
-            Box(Modifier.fillMaxWidth().heightIn(max = 440.dp)) {
-                Column(Modifier.fillMaxWidth().verticalScroll(scroll).padding(end = 14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    result.notes.forEach { note -> Text("• $note", fontSize = 13.sp, lineHeight = 18.sp, color = AppColors.Text) }
-                }
-                Box(Modifier.matchParentSize()) {
-                    VerticalScrollbar(rememberScrollbarAdapter(scroll), Modifier.align(Alignment.CenterEnd).fillMaxHeight())
-                }
+        LegacyNotesDialog("${result.file?.fileName ?: ""} — ${result.notes.size} ta izoh", result.notes) { showNotes = false }
+    }
+}
+
+/** Ko‘chirish izohlarining hammasi — aylantiriladigan ro‘yxat (eski faylda yuzlab qator bo‘lishi mumkin). */
+@Composable
+private fun LegacyNotesDialog(subtitle: String, notes: List<String>, onDismiss: () -> Unit) {
+    AppDialog(
+        title = "Ko‘chirish izohlari",
+        subtitle = subtitle,
+        onDismiss = onDismiss,
+        width = 760.dp,
+        testTag = "legacy-notes-dialog",
+        buttons = { AppButton("Yopish", onClick = onDismiss) },
+    ) {
+        val scroll = rememberScrollState()
+        Box(Modifier.fillMaxWidth().heightIn(max = 440.dp)) {
+            Column(Modifier.fillMaxWidth().verticalScroll(scroll).padding(end = 14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                notes.forEach { note -> Text("• $note", fontSize = 13.sp, lineHeight = 18.sp, color = AppColors.Text) }
+            }
+            Box(Modifier.matchParentSize()) {
+                VerticalScrollbar(rememberScrollbarAdapter(scroll), Modifier.align(Alignment.CenterEnd).fillMaxHeight())
             }
         }
     }

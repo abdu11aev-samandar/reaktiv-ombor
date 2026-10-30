@@ -90,6 +90,16 @@ fun runSelfTest(output: Path): Int {
     }
 }
 
+/**
+ * sqlite-jdbc kutubxonasini qayerga chiqaradi: «<papka> (org.sqlite.tmpdir)» — dastur ASCII papkaga yo‘naltirgan
+ * (Windows, %TEMP% yo‘li tizim kodlashiga sig‘maydi), «<papka> (java.io.tmpdir)» — odatdagi vaqtinchalik papka.
+ */
+internal fun sqliteNativeDirText(): String {
+    val dir = System.getProperty("org.sqlite.tmpdir")?.takeIf { it.isNotBlank() }?.let { "$it (org.sqlite.tmpdir)" }
+        ?: "${System.getProperty("java.io.tmpdir")} (java.io.tmpdir)"
+    return "$dir, sun.jnu.encoding=${System.getProperty("sun.jnu.encoding")}"
+}
+
 /** Natija fayli: har bir qator darhol yoziladi (to‘xtab qolsa ham yozilgani qoladi). */
 private class SelfTestLog(private val writer: BufferedWriter) {
     private var closed = false
@@ -139,7 +149,10 @@ private class SelfTestRun(private val log: SelfTestLog) {
             passed++
             log.ok(name)
         } catch (e: Throwable) {
-            log.fail(name, (e.message ?: e.javaClass.simpleName) + " [${e.javaClass.simpleName}]")
+            // Asl sabab ham (masalan, «Error opening connection» ← SQLite kutubxonasi yuklanmadi).
+            val root = generateSequence(e) { it.cause?.takeIf { cause -> cause !== it } }.take(16).last()
+            val cause = if (root === e) "" else " ← ${root.message ?: root.javaClass.simpleName} [${root.javaClass.simpleName}]"
+            log.fail(name, (e.message ?: e.javaClass.simpleName) + " [${e.javaClass.simpleName}]" + cause)
         }
     }
 
@@ -157,6 +170,7 @@ private class SelfTestRun(private val log: SelfTestLog) {
             log.info("Reaktiv Control self-test, ${LocalDateTime.now(clock).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm:ss"))}")
             log.info("OS: ${System.getProperty("os.name")} ${System.getProperty("os.version")} (${System.getProperty("os.arch")})")
             log.info("Java: ${System.getProperty("java.version")} (${System.getProperty("java.vendor")}), ${System.getProperty("java.home")}")
+            log.info("SQLite kutubxonasi papkasi: ${sqliteNativeDirText()}")
             log.info("Ma’lumotlar papkasi (vaqtinchalik): $dataDir")
             steps()
         } catch (e: Throwable) {
