@@ -172,7 +172,7 @@ class PlacesPagesUiTest {
 
         // Bo‘limga berilgan: reaktiv bo‘yicha jami va sanali qator.
         onNodeWithTag("department-tab-1").performClick()
-        onNodeWithTag("department-issued-group-${ids.etilReagent}-VOLUME").assert(hasText("Sof: 2,5 l"))
+        onNodeWithTag("department-issued-group-${ids.etilReagent}-VOLUME").assert(hasText("Sof berilgan: 2,5 l"))
         onNodeWithTag("department-issued-group-${ids.etilReagent}-VOLUME").assert(hasText("Qaytarilgan: 0,5 l"))
         assertIn("department-issued-row-${ids.gistologiyaIssueItem}", "10.03.2026")
 

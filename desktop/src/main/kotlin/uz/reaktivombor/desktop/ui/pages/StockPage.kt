@@ -208,13 +208,14 @@ private fun stockColumns(): List<TableColumn<StockTotal>> = listOf(
     textColumn("unit", "Birlik", 56.dp, ColumnAlign.CENTER) { it.unit.code },
     textColumn("batches", "Partiyalar (faol/jami)", 92.dp, ColumnAlign.END, sortKey = { it.activeBatches }) { "${it.activeBatches} / ${it.batches}" },
     textColumn("received", "Kelgan", 76.dp, ColumnAlign.END, sortKey = { it.received }) { qtyNumber(it.received, it.unit) },
-    textColumn("issued", "Berilgan", 84.dp, ColumnAlign.END, sortKey = { it.issued }) { qtyNumber(it.issued, it.unit) },
+    // Qaytarilgani ayirilgan (kelgan − sof berilgan − hisobdan chiqarilgan = qoldiq) — «Tumanlar»dagi kabi «Sof berilgan».
+    textColumn("issued", "Sof berilgan", 92.dp, ColumnAlign.END, sortKey = { it.issued }) { qtyNumber(it.issued, it.unit) },
     textColumn("writtenOff", "Hisobdan chiqarilgan", 104.dp, ColumnAlign.END, sortKey = { it.writtenOff }) { qtyNumber(it.writtenOff, it.unit) },
     TableColumn(
-        id = "remainder", title = "Joriy qoldiq", width = 86.dp, align = ColumnAlign.END, sortKey = { it.remainder },
+        id = "remainder", title = "Joriy qoldiq", width = 100.dp, align = ColumnAlign.END, sortKey = { it.remainder },
         text = { qtyNumber(it.remainder, it.unit) },
         cell = { row ->
-            Text(
+            PlacesQtyText(
                 qtyNumber(row.remainder, row.unit),
                 fontSize = 13.5.sp,
                 fontWeight = FontWeight.Bold,
@@ -223,7 +224,6 @@ private fun stockColumns(): List<TableColumn<StockTotal>> = listOf(
                     row.remainder == 0L -> AppColors.Muted
                     else -> AppColors.Text
                 },
-                maxLines = 1,
             )
         },
     ),
@@ -344,14 +344,12 @@ private fun stockBatchColumns(): List<TableColumn<BatchRow>> = listOf(
         },
     ),
     textColumn("receivedQty", "Kelgan", 76.dp, ColumnAlign.END, sortKey = { it.receivedQty }) { qtyNumber(it.receivedQty, it.unit) },
-    textColumn("issued", "Berilgan", 78.dp, ColumnAlign.END, sortKey = { it.issuedQty }) { qtyNumber(it.issuedQty, it.unit) },
+    textColumn("issued", "Sof berilgan", 90.dp, ColumnAlign.END, sortKey = { it.issuedQty }) { qtyNumber(it.issuedQty, it.unit) },
     textColumn("writtenOff", "Hisobdan chiqarilgan", 100.dp, ColumnAlign.END, sortKey = { it.writtenOffQty }) { qtyNumber(it.writtenOffQty, it.unit) },
     TableColumn(
-        id = "remainder", title = "Qoldiq", width = 84.dp, align = ColumnAlign.END, sortKey = { it.remainder },
+        id = "remainder", title = "Qoldiq", width = 96.dp, align = ColumnAlign.END, sortKey = { it.remainder },
         text = { qtyNumber(it.remainder, it.unit) },
-        cell = { row ->
-            Text(qtyNumber(row.remainder, row.unit), fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = if (row.remainder == 0L) AppColors.Muted else AppColors.Text, maxLines = 1)
-        },
+        cell = { row -> PlacesQtyText(qtyNumber(row.remainder, row.unit), color = if (row.remainder == 0L) AppColors.Muted else AppColors.Text) },
     ),
     textColumn("unit", "Birlik", 60.dp, ColumnAlign.CENTER) { it.unit.code },
 )

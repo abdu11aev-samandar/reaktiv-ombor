@@ -29,6 +29,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import uz.reaktivombor.desktop.core.DuplicateOperationError
 import uz.reaktivombor.desktop.core.MeasureUnit
 import uz.reaktivombor.desktop.core.Qty
 import uz.reaktivombor.desktop.core.UserError
@@ -290,7 +291,7 @@ private fun districtItemColumns(today: LocalDate, actions: (IssueItemRow) -> Lis
     TableColumn(
         id = "qty", title = "Miqdor", width = 80.dp, align = ColumnAlign.END, sortKey = { it.qty },
         text = { Qty.format(it.qty, it.enteredUnit) },
-        cell = { row -> Text(Qty.format(row.qty, row.enteredUnit), fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = AppColors.Text, maxLines = 1) },
+        cell = { row -> PlacesQtyText(Qty.format(row.qty, row.enteredUnit)) },
     ),
     textColumn("unit", "Birlik", 58.dp, ColumnAlign.CENTER) { it.enteredUnit.code },
     textColumn("returned", "Qaytarilgan", 116.dp, ColumnAlign.END, sortKey = { it.returnedQty }) {
@@ -334,7 +335,7 @@ private fun districtReagentColumns(): List<TableColumn<DistrictReagentTotal>> = 
     TableColumn(
         id = "net", title = "Sof berilgan", width = 96.dp, align = ColumnAlign.END, sortKey = { it.total.net },
         text = { qtyNumber(it.total.net, it.total.unit) },
-        cell = { row -> Text(qtyNumber(row.total.net, row.total.unit), fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = AppColors.Text, maxLines = 1) },
+        cell = { row -> PlacesQtyText(qtyNumber(row.total.net, row.total.unit)) },
     ),
     textColumn("times", "Necha marta", 86.dp, ColumnAlign.END, sortKey = { it.total.items }) { "${it.total.items}" },
     textColumn("first", "Birinchi sana", 98.dp, ColumnAlign.END, sortKey = { it.total.firstDate }) { dateText(it.total.firstDate) },
@@ -355,19 +356,37 @@ private fun DistrictsReturnDialog(state: AppState, item: IssueItemRow, onDismiss
     var receivedBy by remember { mutableStateOf(actor) }
     var reason by remember { mutableStateOf("") }
     var generalError by remember { mutableStateOf<String?>(null) }
+    val confirm = rememberConfirmState()
     val units = MeasureUnit.of(item.unit.dimension)
 
-    fun save() {
+    // Takroriy qaytarish (2 daqiqa ichida xuddi shunday) — tasdiqlansa, qayta yuboriladi.
+    fun save(confirmDuplicate: Boolean = false) {
         generalError = null
         state.run(
-            { state.services.stock.returnItem(item.id, ReturnInput(date, qty, unit, reason.ifBlank { null }, receivedBy.ifBlank { null })) },
+            {
+                state.services.stock.returnItem(
+                    item.id,
+                    ReturnInput(date, qty, unit, reason.ifBlank { null }, receivedBy.ifBlank { null }),
+                    confirmDuplicate,
+                )
+            },
             form = form,
             onError = { e: UserError ->
-                if (e.fields.isEmpty()) {
-                    generalError = e.message
-                    true
-                } else {
-                    false
+                when {
+                    e is DuplicateOperationError -> {
+                        confirm.ask(
+                            title = "Takroriy qaytarish",
+                            message = e.message,
+                            confirmLabel = "Baribir saqlash",
+                            dismissLabel = "Orqaga",
+                        ) { save(confirmDuplicate = true) }
+                        true
+                    }
+                    e.fields.isEmpty() -> {
+                        generalError = e.message
+                        true
+                    }
+                    else -> false
                 }
             },
         ) {
@@ -425,4 +444,5 @@ private fun DistrictsReturnDialog(state: AppState, item: IssueItemRow, onDismiss
             )
         }
     }
+    ConfirmHost(confirm, state.busy)
 }

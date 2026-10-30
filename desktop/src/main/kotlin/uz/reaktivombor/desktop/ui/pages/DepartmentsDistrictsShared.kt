@@ -39,6 +39,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import uz.reaktivombor.desktop.core.Dimension
@@ -297,6 +298,20 @@ private fun PlacesListItem(name: String, secondary: String?, active: Boolean, se
 }
 
 // ---------------------------------------------------------------- kartalar va varaqlar
+
+/**
+ * Jadvaldagi miqdor katagi (qalin): doim bitta qatorda — raqam minglar bo‘shlig‘ida bo‘linib, qolgani yashirinib
+ * qolmasin («125 000,25» → «125» emas). Ustunga sig‘masa «…» bilan qisqaradi. Umumiy zaxiralar sahifasi ham ishlatadi.
+ */
+@Composable
+internal fun PlacesQtyText(
+    text: String,
+    color: Color = AppColors.Text,
+    fontSize: TextUnit = 13.sp,
+    fontWeight: FontWeight = FontWeight.SemiBold,
+) {
+    Text(text, fontSize = fontSize, fontWeight = fontWeight, color = color, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
+}
 
 /** O‘lchov turlari bo‘yicha jamlar — har bir tur alohida qator ("14 l", "12 g"); turlar hech qachon qo‘shilmaydi. */
 internal fun placesTotalsLines(totals: Map<Dimension, Long>): List<String> =

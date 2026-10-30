@@ -191,8 +191,8 @@ private fun DepartmentCards(owned: List<BatchRow>, issuedTo: List<ReagentQtyTota
             hint = "bo‘lim partiyalariga", testTag = "department-card-received",
         )
         PlacesTotalsCard(
-            "Berilgan", placesTotalsLines(placesTotals(owned, { it.dimension }, { it.issuedQty })), card,
-            hint = if (writtenOff.isNotEmpty()) "hisobdan chiqarilgan: ${totalsText(writtenOff)}" else "bo‘lim partiyalaridan",
+            "Sof berilgan", placesTotalsLines(placesTotals(owned, { it.dimension }, { it.issuedQty })), card,
+            hint = if (writtenOff.isNotEmpty()) "hisobdan chiqarilgan: ${totalsText(writtenOff)}" else "qaytarilgani ayirilgan",
             testTag = "department-card-issued",
         )
         PlacesTotalsCard(
@@ -235,19 +235,12 @@ private fun departmentBatchColumns(): List<TableColumn<BatchRow>> = listOf(
         cell = { row -> ExpiryChip(row.state) },
     ),
     textColumn("received", "Kelgan", 84.dp, ColumnAlign.END, sortKey = { it.receivedQty }) { qtyNumber(it.receivedQty, it.unit) },
-    textColumn("issued", "Berilgan", 84.dp, ColumnAlign.END, sortKey = { it.issuedQty }) { qtyNumber(it.issuedQty, it.unit) },
+    // Partiyadan berilgani qaytarilgani ayirilgan holda (kelgan − sof berilgan − hisobdan chiqarilgan = qoldiq).
+    textColumn("issued", "Sof berilgan", 92.dp, ColumnAlign.END, sortKey = { it.issuedQty }) { qtyNumber(it.issuedQty, it.unit) },
     TableColumn(
-        id = "remainder", title = "Joriy qoldiq", width = 90.dp, align = ColumnAlign.END, sortKey = { it.remainder },
+        id = "remainder", title = "Joriy qoldiq", width = 104.dp, align = ColumnAlign.END, sortKey = { it.remainder },
         text = { qtyNumber(it.remainder, it.unit) },
-        cell = { row ->
-            Text(
-                qtyNumber(row.remainder, row.unit),
-                fontSize = 13.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = if (row.remainder == 0L) AppColors.Muted else AppColors.Text,
-                maxLines = 1,
-            )
-        },
+        cell = { row -> PlacesQtyText(qtyNumber(row.remainder, row.unit), color = if (row.remainder == 0L) AppColors.Muted else AppColors.Text) },
     ),
     textColumn("unit", "Birlik", 56.dp, ColumnAlign.CENTER) { it.unit.code },
     textColumn("days", "Qolgan kunlar", 100.dp, ColumnAlign.END, sortKey = { it.daysLeft }, visibleByDefault = false) { daysText(it.daysLeft) },
@@ -298,9 +291,9 @@ private fun IssuedGroupHeader(info: GroupInfo<IssueItemRow>, total: ReagentQtyTo
         Text(first.name, fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold, color = AppColors.Text, maxLines = 1, overflow = TextOverflow.Ellipsis)
         if (total != null) {
             Text("${total.items} ta berish", fontSize = 12.5.sp, color = AppColors.Muted, maxLines = 1)
-            Text("Berilgan: ${qtyText(total.issued, total.unit)}", fontSize = 12.5.sp, color = AppColors.Text, maxLines = 1)
-            if (total.returned > 0) Text("Qaytarilgan: ${qtyText(total.returned, total.unit)}", fontSize = 12.5.sp, color = AppColors.Text, maxLines = 1)
-            Text("Sof: ${qtyText(total.net, total.unit)}", fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, color = AppColors.Navy, maxLines = 1)
+            Text("Berilgan: ${qtyText(total.issued, total.unit)}", fontSize = 12.5.sp, color = AppColors.Text, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
+            if (total.returned > 0) Text("Qaytarilgan: ${qtyText(total.returned, total.unit)}", fontSize = 12.5.sp, color = AppColors.Text, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
+            Text("Sof berilgan: ${qtyText(total.net, total.unit)}", fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, color = AppColors.Navy, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
             Text(
                 if (total.firstDate == total.lastDate) dateText(total.firstDate) else "${dateText(total.firstDate)} — ${dateText(total.lastDate)}",
                 fontSize = 12.5.sp,
@@ -321,9 +314,9 @@ private fun departmentIssuedColumns(): List<TableColumn<IssueItemRow>> = listOf(
         if (it.returnedQty > 0) Qty.format(it.returnedQty, it.enteredUnit) else "—"
     },
     TableColumn(
-        id = "net", title = "Sof", width = 80.dp, align = ColumnAlign.END, sortKey = { it.netQty },
+        id = "net", title = "Sof berilgan", width = 96.dp, align = ColumnAlign.END, sortKey = { it.netQty },
         text = { Qty.format(it.netQty, it.enteredUnit) },
-        cell = { row -> Text(Qty.format(row.netQty, row.enteredUnit), fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = AppColors.Text, maxLines = 1) },
+        cell = { row -> PlacesQtyText(Qty.format(row.netQty, row.enteredUnit)) },
     ),
     textColumn("unit", "Birlik", 56.dp, ColumnAlign.CENTER) { it.enteredUnit.code },
     textColumn("receiver", "Qabul qiluvchi", 130.dp) { it.receiver.ifBlank { "—" } },
