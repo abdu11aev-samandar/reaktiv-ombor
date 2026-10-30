@@ -21,9 +21,11 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -115,6 +117,17 @@ fun DateField(
     // Yozish paytida chala sana xato emas; maydondan chiqqanda yoki sana to‘liq yozilganda ko‘rsatiladi.
     val showOwnError = check.error != null && ((touched && !focused) || (shown.text.isNotBlank() && COMPLETE.matches(shown.text)))
     val message = error ?: check.error.takeIf { showOwnError }
+
+    // Filtr panelida: yozilgan, lekin sana bo‘lmagan matn (chala yoki noto‘g‘ri) — «Filtrlarni tozalash» uchun faol.
+    val pendingInputs = LocalFilterPendingInputs.current
+    if (pendingInputs != null) {
+        val token = remember { Any() }
+        val pendingText = shown.text.isNotBlank() && check.date == null
+        DisposableEffect(pendingInputs, pendingText) {
+            pendingInputs.report(token, pendingText)
+            onDispose { pendingInputs.report(token, false) }
+        }
+    }
 
     fun commitText(next: TextFieldValue) {
         field = next
@@ -371,7 +384,8 @@ private fun DayCell(
 
 /**
  * Davr: «dan» va «gacha» sanalari yonma-yon. Boshlanishi tugashidan keyin bo‘lsa — xato matni (qiymatlar baribir
- * beriladi, sahifa qidiruvni to‘xtatishi mumkin).
+ * beriladi, sahifa qidiruvni to‘xtatishi mumkin). [onErrorChange] — maydonlardan birida noto‘g‘ri yoki chala sana
+ * yozilgan (qiymati null bo‘lib qolgan) bo‘lsa uning xatosi, aks holda null; maydon olib tashlansa — null.
  */
 @Composable
 fun DateRangeField(
@@ -383,9 +397,14 @@ fun DateRangeField(
     today: LocalDate = LocalDate.now(),
     enabled: Boolean = true,
     fieldWidth: Dp = 150.dp,
+    onErrorChange: (String?) -> Unit = {},
     testTag: String = "range",
 ) {
     val wrong = from != null && to != null && from > to
+    var fromError by remember { mutableStateOf<String?>(null) }
+    var toError by remember { mutableStateOf<String?>(null) }
+    val reportError by rememberUpdatedState(onErrorChange)
+    DisposableEffect(Unit) { onDispose { reportError(null) } }
     LabeledField(label, modifier, error = if (wrong) "Boshlanish sanasi tugash sanasidan keyin bo‘lmasligi kerak." else null) {
         Row(verticalAlignment = Alignment.Top) {
             DateField(
@@ -394,6 +413,10 @@ fun DateRangeField(
                 modifier = Modifier.width(fieldWidth),
                 today = today,
                 enabled = enabled,
+                onErrorChange = {
+                    fromError = it
+                    reportError(it ?: toError)
+                },
                 placeholder = "dan",
                 testTag = "$testTag-from",
             )
@@ -404,6 +427,10 @@ fun DateRangeField(
                 modifier = Modifier.width(fieldWidth),
                 today = today,
                 enabled = enabled,
+                onErrorChange = {
+                    toError = it
+                    reportError(it ?: fromError)
+                },
                 placeholder = "gacha",
                 testTag = "$testTag-to",
             )

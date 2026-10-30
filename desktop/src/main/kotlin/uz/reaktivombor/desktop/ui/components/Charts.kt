@@ -157,6 +157,70 @@ fun BarChart(
 }
 
 /**
+ * [BarChart] ning berilgan balandlikka sig‘adigan qismi: ustunlar (kattasidan boshlab berilgan tartibda) joy yetguncha,
+ * qolganlari uchun pastda «Yana N ta — hammasi» havolasi ([onMore]). Hech bir ustun yashirincha kesilib qolmaydi.
+ * Balandligi cheklanmagan joyda hammasi ko‘rsatiladi.
+ */
+@Composable
+fun FittedBarChart(
+    bars: List<ChartBar>,
+    modifier: Modifier = Modifier,
+    color: Color = AppColors.Primary,
+    labelWidth: Dp = 150.dp,
+    valueWidth: Dp = 76.dp,
+    barThickness: Dp = 14.dp,
+    emptyText: String = "Ma’lumot yo‘q",
+    onBarClick: ((ChartBar) -> Unit)? = null,
+    onMore: (() -> Unit)? = null,
+    testTag: String = "bar-chart",
+) {
+    BoxWithConstraints(modifier) {
+        val rowHeight = barThickness + 12.dp
+        val gap = 2.dp
+        fun fit(height: Dp): Int = if (height <= 0.dp) 0 else ((height + gap) / (rowHeight + gap)).toInt()
+        val shown = when {
+            !constraints.hasBoundedHeight -> bars.size
+            bars.size <= fit(maxHeight) -> bars.size
+            else -> fit(maxHeight - MoreLinkHeight - gap).coerceIn(1, bars.size)
+        }
+        Column {
+            BarChart(
+                bars = bars.take(shown),
+                color = color,
+                labelWidth = labelWidth,
+                valueWidth = valueWidth,
+                barThickness = barThickness,
+                emptyText = emptyText,
+                onBarClick = onBarClick,
+                testTag = testTag,
+            )
+            if (shown < bars.size) {
+                Spacer(Modifier.height(gap))
+                Row(
+                    Modifier
+                        .height(MoreLinkHeight)
+                        .clip(RoundedCornerShape(4.dp))
+                        .let { if (onMore != null) it.clickable(role = Role.Button, onClick = onMore) else it }
+                        .padding(horizontal = 4.dp)
+                        .testTag("$testTag-more"),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        "Yana ${bars.size - shown} ta" + if (onMore != null) " — hammasi" else "",
+                        fontSize = 12.5.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (onMore != null) AppColors.Primary else AppColors.Muted,
+                        maxLines = 1,
+                    )
+                }
+            }
+        }
+    }
+}
+
+private val MoreLinkHeight = 26.dp
+
+/**
  * Halqa grafigi: bo‘laklar orasida ingichka oq oraliq, markazda jami, yonida (joy yetmasa — ostida) izoh: rang, nom,
  * qiymat, foiz. Izoh qatori ustiga kelganda bo‘lak qalinlashadi. Jami 0 bo‘lsa — kulrang halqa.
  */
@@ -259,4 +323,5 @@ fun DonutChart(
     }
 }
 
-private val LegendMinWidth = 230.dp
+// 1280 dp oynada (dasturning eng kichik kengligi) ham izoh halqa yonida sig‘sin: 100 + 18 + 220 ≤ 342.
+private val LegendMinWidth = 220.dp

@@ -67,7 +67,7 @@ class ReagentsExportUiTest {
     private fun Row.text(i: Int): String = if (i < cellCount) getCellText(i).orEmpty() else ""
 
     @Test
-    fun excelExportUsesThePageFiltersAndSaysWhichApplied() = runDesktopComposeUiTest(1366, 768) {
+    fun excelExportWritesTheRowsOnScreenAndEveryFilter() = runDesktopComposeUiTest(1366, 768) {
         val target = out.resolve("partiyalar.xlsx")
         dialogs.saveAnswer = target
         app()
@@ -75,8 +75,11 @@ class ReagentsExportUiTest {
         // 0 — «Hammasi», 1 — Gistologiya.
         onNodeWithTag("filter-department-option-1").performClick()
         onNodeWithTag("filter-series").performTextInput("ES")
-        // Holat filtri hisobotda yo‘q — xabarda aytiladi.
+        // Holat tugmasi ham qo‘llanadi: ekranda faqat sariq ES-003 — faylda ham faqat u (ilgari ES-001 ham tushardi).
         onNodeWithTag("state-chip-YELLOW").performClick()
+        waitForIdle()
+        onNodeWithTag("reagents-row-${ids.es003}").assertExists()
+        onNodeWithTag("reagents-row-${ids.es001}").assertDoesNotExist()
         mainClock.autoAdvance = false
         onNodeWithTag("reagents-export-excel").performClick()
         mainClock.advanceTimeBy(300)
@@ -86,14 +89,18 @@ class ReagentsExportUiTest {
         assertEquals("Reaktivlarning partiyalar bo‘yicha ro‘yxati", rows[0].text(0))
         assertTrue(rows.any { it.text(0) == "Seriya: ES" })
         assertTrue(rows.any { it.text(0) == "Bo‘lim: Gistologiya" })
+        assertTrue(rows.any { it.text(0) == "Holati: 1–3 oy qoldi" })
         val header = rows.indexOfFirst { it.text(0) == "№" }
         // Seriya ustuni to‘ldirilgan qatorlar — partiyalar (jami qatorlarisiz).
         val series = rows.drop(header + 1).map { it.text(2) }.filter { it.isNotEmpty() }
-        assertEquals(listOf("ES-003", "ES-001"), series)
+        assertEquals(listOf("ES-003"), series)
 
-        onNode(hasText("Excel fayliga saqlandi (2 ta qator): partiyalar.xlsx.", substring = true) and hasAnyAncestor(hasTestTag("message-success"))).assertExists()
-        onNode(hasText("Qo‘llangan filtrlar: Seriya: ES; Bo‘lim: Gistologiya.", substring = true) and hasAnyAncestor(hasTestTag("message-success"))).assertExists()
-        onNode(hasText("Hisobotga o‘tmagan filtrlar: holat.", substring = true) and hasAnyAncestor(hasTestTag("message-success"))).assertExists()
+        onNode(hasText("Excel fayliga saqlandi (1 ta qator): partiyalar.xlsx.", substring = true) and hasAnyAncestor(hasTestTag("message-success"))).assertExists()
+        onNode(
+            hasText("Qo‘llangan filtrlar: Seriya: ES; Bo‘lim: Gistologiya; Holati: 1–3 oy qoldi.", substring = true) and
+                hasAnyAncestor(hasTestTag("message-success")),
+        ).assertExists()
+        onNode(hasText("Hisobotga o‘tmagan", substring = true)).assertDoesNotExist()
     }
 
     @Test

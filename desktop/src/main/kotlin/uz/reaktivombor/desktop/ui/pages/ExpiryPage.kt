@@ -153,8 +153,10 @@ fun ExpiryPage(state: AppState) {
             DepartmentSelect(
                 state, departmentId, { departmentId = it },
                 placeholder = "Hammasi", allowAdd = false, modifier = Modifier.width(170.dp), testTag = "expiry-department",
+                includeInactive = true,
             )
-            CheckField(includeEmpty, { includeEmpty = it }, "Qoldig‘i yo‘qlarni ham ko‘rsatish", testTag = "expiry-empty")
+            // «Barcha reaktivlar» dagi bilan bir xil nom: qoldig‘i 0 bo‘lgan partiyalar.
+            CheckField(includeEmpty, { includeEmpty = it }, "Qoldig‘i yo‘qlar ham", testTag = "expiry-empty")
             CheckField(includeArchived, { includeArchived = it }, "Arxivdagilar", testTag = "expiry-archived")
         }
         ExpiryStateChips(states, { states = it }, counts, baseRows.size)

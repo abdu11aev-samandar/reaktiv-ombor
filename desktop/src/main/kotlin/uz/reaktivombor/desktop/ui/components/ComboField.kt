@@ -1,21 +1,22 @@
 package uz.reaktivombor.desktop.ui.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -28,9 +29,12 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.layout.onPlaced
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
@@ -196,31 +200,36 @@ fun ComboField(
             }
 
             val scroll = rememberScrollState()
+            // Bandlar balandligi har xil (uzun nom 2 qatorda): ↑/↓ bilan tanlanganini ko‘rinadigan joyga aylantirish uchun.
+            val itemBounds = remember { mutableStateMapOf<Int, IntRange>() }
             LaunchedEffect(highlighted) {
-                if (highlighted >= 0) {
-                    val itemPx = with(density) { ComboItemHeight.roundToPx() }
-                    val top = highlighted * itemPx
-                    val viewport = scroll.viewportSize
-                    when {
-                        top < scroll.value -> scroll.scrollTo(top)
-                        viewport > 0 && top + itemPx > scroll.value + viewport -> scroll.scrollTo(top + itemPx - viewport)
-                    }
+                val bounds = itemBounds[highlighted] ?: return@LaunchedEffect
+                val viewport = scroll.viewportSize
+                when {
+                    bounds.first < scroll.value -> scroll.scrollTo(bounds.first)
+                    viewport > 0 && bounds.last > scroll.value + viewport -> scroll.scrollTo(bounds.last - viewport)
                 }
             }
+            val fieldWidth = with(density) { widthPx.toDp() }.coerceAtLeast(160.dp)
             DropdownMenu(
                 expanded = open,
                 onDismissRequest = { close() },
                 // Fokus matn maydonida qoladi — yozish davom etadi.
                 properties = PopupProperties(focusable = false),
                 scrollState = scroll,
-                modifier = Modifier.width(with(density) { widthPx.toDp() }.coerceAtLeast(160.dp)).heightIn(max = 300.dp),
+                // Ro‘yxat maydondan kengroq bo‘lishi mumkin (uzun nomlar bir-biridan ajralib tursin), lekin ComboMenuMaxWidth gacha.
+                modifier = Modifier.widthIn(min = fieldWidth, max = maxOf(fieldWidth, ComboMenuMaxWidth)).heightIn(max = 300.dp),
             ) {
+                fun Modifier.bounds(index: Int) = onPlaced { c ->
+                    val top = c.positionInParent().y.toInt()
+                    itemBounds[index] = top..(top + c.size.height)
+                }
                 items.forEachIndexed { index, item ->
                     ComboItem(
                         text = item,
                         highlighted = index == highlighted,
                         onClick = { pick(item, isNew = false) },
-                        modifier = Modifier.testTag("$testTag-item-$index"),
+                        modifier = Modifier.bounds(index).testTag("$testTag-item-$index"),
                     )
                 }
                 if (newValue != null) {
@@ -229,7 +238,7 @@ fun ComboField(
                         highlighted = highlighted == items.size,
                         onClick = { pick(newValue, isNew = true) },
                         accent = true,
-                        modifier = Modifier.testTag("$testTag-new"),
+                        modifier = Modifier.bounds(items.size).testTag("$testTag-new"),
                     )
                 }
             }
@@ -239,23 +248,31 @@ fun ComboField(
 
 private val ComboItemHeight = 34.dp
 
+/** Takliflar ro‘yxatining eng katta kengligi (maydon bundan keng bo‘lsa — maydon kengligida). */
+private val ComboMenuMaxWidth = 560.dp
+
+/** Taklif bandi: qisqa nom — bir qator, uzun nom — 2 qatorga o‘raladi (oxiri «…»). */
 @Composable
 private fun ComboItem(text: String, highlighted: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier, accent: Boolean = false) {
-    DropdownMenuItem(
-        text = {
-            Text(
-                text,
-                fontSize = 13.5.sp,
-                fontWeight = if (accent) FontWeight.SemiBold else FontWeight.Normal,
-                color = if (accent) AppColors.Primary else AppColors.Text,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        },
-        onClick = onClick,
-        modifier = modifier.height(ComboItemHeight).fillMaxWidth().background(if (highlighted) AppColors.PrimarySoft else AppColors.Surface),
-        contentPadding = PaddingValues(horizontal = 12.dp),
-    )
+    Box(
+        modifier
+            .fillMaxWidth()
+            .heightIn(min = ComboItemHeight)
+            .background(if (highlighted) AppColors.PrimarySoft else AppColors.Surface)
+            .clickable(role = Role.Button, onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        Text(
+            text,
+            fontSize = 13.5.sp,
+            lineHeight = 17.sp,
+            fontWeight = if (accent) FontWeight.SemiBold else FontWeight.Normal,
+            color = if (accent) AppColors.Primary else AppColors.Text,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
 }
 
 /**

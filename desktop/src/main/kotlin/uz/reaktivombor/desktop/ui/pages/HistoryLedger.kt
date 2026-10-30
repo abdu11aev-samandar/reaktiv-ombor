@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -228,8 +229,13 @@ private fun HistoryLedgerSummary(reagent: Reagent, batches: List<BatchRow>, line
         horizontalArrangement = Arrangement.spacedBy(28.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        InfoPair("Reaktiv", reagent.name + if (reagent.formula.isNotBlank()) " (${reagent.formula})" else "")
-        InfoPair(if (batches.size == 1) "Partiya" else "Partiyalar", if (batches.size == 1) batches.single().label() else "${batches.size} ta")
+        // Uzun nom qolgan juftlarni siqib qo‘ymasin: nom bo‘sh joyni oladi (2 qatordan keyin «…»), partiya — 300dp gacha.
+        InfoPair("Reaktiv", reagent.name + if (reagent.formula.isNotBlank()) " (${reagent.formula})" else "", Modifier.weight(1f, fill = false))
+        InfoPair(
+            if (batches.size == 1) "Partiya" else "Partiyalar",
+            if (batches.size == 1) batches.single().label() else "${batches.size} ta",
+            Modifier.widthIn(max = 300.dp),
+        )
         InfoPair("Harakatlar", "${lines.size} ta" + if (cancelled > 0) " (keyin bekor qilingani: $cancelled)" else "")
         InfoPair("Joriy qoldiq", totalsText(totals), valueColor = AppColors.Primary)
     }
@@ -240,6 +246,7 @@ private fun HistoryLedgerGroupHeader(info: GroupInfo<HistoryLedgerLine>) {
     val first = info.rows.first()
     val batch = first.batch
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        // Uzun nom qisqartiriladi — holat, harakatlar soni va joriy qoldiq doim ko‘rinadi.
         Text(
             batch?.label() ?: "${first.row.name} · ${first.row.series.ifBlank { "seriyasiz" }}",
             fontSize = 13.5.sp,
@@ -247,6 +254,7 @@ private fun HistoryLedgerGroupHeader(info: GroupInfo<HistoryLedgerLine>) {
             color = AppColors.Text,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f, fill = false),
         )
         if (batch != null) ExpiryChip(batch.state)
         Text("${info.rows.size} ta harakat", fontSize = 12.5.sp, color = AppColors.Muted, maxLines = 1)
@@ -287,12 +295,25 @@ private fun historyLedgerColumns(): List<TableColumn<HistoryLedgerLine>> = listO
                     else -> AppColors.Text
                 },
                 maxLines = 1,
+                // Minglik bo‘shlig‘ida bo‘linib, qolgani yashirinmasin: sig‘masa «…».
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis,
             )
         },
     ),
     TableColumn(
         id = "balance", title = "Qoldiq", width = 104.dp, align = ColumnAlign.END, sortKey = { it.row.balance }, text = { qtyText(it.row.balance, it.row.unit) },
-        cell = { line -> Text(qtyText(line.row.balance, line.row.unit), fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = AppColors.Text, maxLines = 1) },
+        cell = { line ->
+            Text(
+                qtyText(line.row.balance, line.row.unit),
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = AppColors.Text,
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis,
+            )
+        },
     ),
     TableColumn(
         id = "party", title = "Qabul qiluvchi / manba", width = 230.dp, text = { it.party },

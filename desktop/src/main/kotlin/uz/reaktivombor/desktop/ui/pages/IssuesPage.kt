@@ -183,6 +183,12 @@ fun IssuesPage(state: AppState) {
             }
         }
     }
+    // Saqlanmagan qatorlar bilan boshqa sahifaga o‘tilsa — tasdiq so‘raladi (Common.kt, rememberLeaveGuard).
+    rememberLeaveGuard(state) {
+        val lines = form.lines.filterNot { it.isBlank }
+            .map { listOf(it.reagentText, it.batchId, it.qty, it.unit, it.type, it.departmentId, it.districtName, it.organization, it.receiver, it.note) }
+        if (lines.isEmpty() && form.docNo.isBlank() && form.note.isBlank()) null else listOf(form.docNo, form.note, lines)
+    }
     val confirm = rememberConfirmState()
     var splitOpen by remember { mutableStateOf(false) }
     var saved by remember { mutableStateOf<IssuesSaved?>(null) }

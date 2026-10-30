@@ -27,7 +27,16 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.Stable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -135,8 +144,29 @@ internal fun FieldMessage(text: String, color: Color) {
 internal val FieldLabelColor = Color(0xFF39424E)
 
 /**
+ * Filtr panelidagi yozilgan, lekin hali qiymatga aylanmagan matnlar (masalan, noto‘g‘ri sana «31.02.2026»): ular
+ * filtrga o‘tmaydi, lekin «Filtrlarni tozalash» ularni ham tozalashi va ular bor paytda tugma yoqiq turishi kerak.
+ */
+@Stable
+class FilterPendingInputs {
+    private val pending = mutableStateMapOf<Any, Boolean>()
+
+    /** Qiymatga aylanmagan matnli maydonlar soni. */
+    val count: Int get() = pending.size
+
+    internal fun report(key: Any, has: Boolean) {
+        if (has) pending[key] = true else pending.remove(key)
+    }
+}
+
+/** [FilterBar] ichidagi maydonlar (DateField) chala/noto‘g‘ri matnini shu yerga bildiradi; panel tashqarisida — null. */
+val LocalFilterPendingInputs = staticCompositionLocalOf<FilterPendingInputs?> { null }
+
+/**
  * Filtrlar paneli: maydonlar bir nechta qatorga o‘raladi, oxirida «Filtrlarni tozalash».
  * [activeCount]: null — son noma’lum (tugma doim faol); 0 — filtr yo‘q (tugma o‘chiq); > 0 — tugma yonida son.
+ * Ichidagi sana maydonlaridagi noto‘g‘ri matn ham faol filtr sifatida sanaladi; tozalanganda panel maydonlari
+ * yangidan tuziladi (yozilgan, lekin filtrga o‘tmagan matn ham o‘chadi).
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -146,6 +176,9 @@ fun FilterBar(
     activeCount: Int? = null,
     content: @Composable () -> Unit,
 ) {
+    val pending = remember { FilterPendingInputs() }
+    var resetKey by remember { mutableIntStateOf(0) }
+    val count = activeCount?.plus(pending.count)
     Surface(
         modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(10.dp),
@@ -159,16 +192,23 @@ fun FilterBar(
                 Modifier.weight(1f),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) { content() }
+            ) {
+                CompositionLocalProvider(LocalFilterPendingInputs provides pending) {
+                    key(resetKey) { content() }
+                }
+            }
             if (onClear != null) {
                 Spacer(Modifier.width(8.dp))
                 Box(Modifier.padding(top = 20.dp)) {
                     AppButton(
-                        text = if (activeCount != null && activeCount > 0) "Filtrlarni tozalash ($activeCount)" else "Filtrlarni tozalash",
-                        onClick = onClear,
+                        text = if (count != null && count > 0) "Filtrlarni tozalash ($count)" else "Filtrlarni tozalash",
+                        onClick = {
+                            resetKey++
+                            onClear()
+                        },
                         kind = ButtonKind.TEXT,
                         icon = AppIcons.Close,
-                        enabled = activeCount != 0,
+                        enabled = count != 0,
                     )
                 }
             }

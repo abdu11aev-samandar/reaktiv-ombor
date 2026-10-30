@@ -37,11 +37,13 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -383,6 +385,8 @@ private sealed class CommonDepartmentChoice {
 /**
  * Bo‘lim tanlash (faol bo‘limlar + hozir tanlangani, nofaol bo‘lsa ham). [allowNone] — «Tanlanmagan» bandi,
  * [allowAdd] — «+ Yangi bo‘lim qo‘shish…» (nomini so‘rab, Directory.addDepartment orqali qo‘shadi va tanlaydi).
+ * [includeInactive] — filtrlar uchun: nofaol bo‘limlar ham ro‘yxatda («(nofaol)» belgisi bilan), chunki ularning
+ * partiyalari va tarixi qoladi; shakllarda (biriktirish, berish) — faqat faollari.
  */
 @Composable
 fun DepartmentSelect(
@@ -397,12 +401,13 @@ fun DepartmentSelect(
     error: String? = null,
     enabled: Boolean = true,
     testTag: String = "department",
+    includeInactive: Boolean = false,
 ) {
     val all = remember(state.refreshTick) { state.load(emptyList()) { state.services.directory.departments(includeInactive = true) } }
     var adding by remember { mutableStateOf(false) }
     val options = buildList {
         if (allowNone) add(CommonDepartmentChoice.None)
-        all.filter { it.active || it.id == value }.forEach { add(CommonDepartmentChoice.Existing(it)) }
+        all.filter { includeInactive || it.active || it.id == value }.forEach { add(CommonDepartmentChoice.Existing(it)) }
         if (allowAdd) add(CommonDepartmentChoice.AddNew)
     }
     val current = all.firstOrNull { it.id == value }?.let { CommonDepartmentChoice.Existing(it) }
@@ -599,6 +604,44 @@ fun rememberConfirmState(): ConfirmState = remember { ConfirmState() }
 @Composable
 fun ConfirmHost(confirm: ConfirmState, busy: Boolean = false) {
     confirm.Render(busy)
+}
+
+// ---------------------------------------------------------------- saqlanmagan o‘zgarishlar
+
+/**
+ * Shaklning «toza» holatiga nisbatan o‘zgarganini kuzatadi. [snapshot] — shakl maydonlarining qiymati (equals bilan
+ * solishtiriladi); null — shakl bo‘sh (saqlanadigan narsa yo‘q). Toza holat — sahifa ochilgandagi qiymat (topshiriq
+ * bilan oldindan to‘ldirilgani ham) yoki oxirgi [markClean] dagisi.
+ */
+@Stable
+class UnsavedChanges internal constructor(private val snapshot: () -> Any?) {
+    private var clean: Any? = snapshot()
+
+    /** Saqlangandan yoki «Tozalash» dan keyin: hozirgi holat toza deb olinadi. */
+    fun markClean() {
+        clean = snapshot()
+    }
+
+    /** Shaklda saqlanmagan narsa bor. */
+    val isDirty: Boolean
+        get() = snapshot().let { it != null && it != clean }
+}
+
+/**
+ * Sahifa shakli uchun chiqish himoyasi: saqlanmagan o‘zgarish bo‘lsa, boshqa sahifaga o‘tishdan oldin App.kt
+ * «Saqlanmagan o‘zgarishlar bor…» deb so‘raydi (AppState.navigate). Sahifa funksiyasining boshida, shakl holatidan
+ * keyin bir marta chaqiriladi: `rememberLeaveGuard(state) { listOf(form.name, form.qty) }`.
+ */
+@Composable
+fun rememberLeaveGuard(state: AppState, snapshot: () -> Any?): UnsavedChanges {
+    val current by rememberUpdatedState(snapshot)
+    val changes = remember { UnsavedChanges { current() } }
+    DisposableEffect(state, changes) {
+        val guard = { changes.isDirty }
+        state.setLeaveGuard(guard)
+        onDispose { state.clearLeaveGuard(guard) }
+    }
+    return changes
 }
 
 // ---------------------------------------------------------------- katta oyna
