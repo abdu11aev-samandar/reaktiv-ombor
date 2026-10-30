@@ -141,7 +141,7 @@ Chap menyuda 13 bo‘lim, har biri ishlaydigan sahifa:
 | Umumiy zaxiralar | Har bir reaktiv nomi bo‘yicha jami (faqat mos birliklar qo‘shiladi: l + ml, kg + g; litr va kilogramm hech qachon qo‘shilmaydi), minimal qoldiq nazorati |
 | Hisobotlar | 12 tur — Excel (.xlsx) va PDF; sana oralig‘i, nom, seriya, bo‘lim, tuman filtrlari; hisobotda yaratilgan vaqt va filtrlar |
 | Operatsiyalar tarixi | Barcha amallar jurnali + har bir reaktiv / partiyaning qoldiqli to‘liq tarixi |
-| Ma’lumotlarni zaxiralash | Zaxira nusxa yaratish, undan tiklash (oldin joriy baza avtomatik saqlanadi), avtomatik nusxalar ro‘yxati, eski dasturdan ko‘chirish |
+| Ma’lumotlarni zaxiralash | Zaxira nusxa yaratish, undan tiklash (oldin joriy baza avtomatik saqlanadi), avtomatik nusxalar ro‘yxati, eski dasturdan ko‘chirish (oxirgi ko‘chirishning barcha izohlari bilan) |
 | Sozlamalar | Tashkilot nomi (hisobotlarda), xodim nomi, nechta avtomatik nusxa saqlanishi, jadval ustunlarini tiklash, dastur haqida |
 
 Ranglar — aniq kunlar bo‘yicha (qolgan kunlar = yaroqlilik muddati − bugun):
@@ -166,12 +166,24 @@ Ranglar — aniq kunlar bo‘yicha (qolgan kunlar = yaroqlilik muddati − bugun
 
 ### O‘rnatish
 
+**Talab: faqat 64-bitli tizim** — Windows 10 yoki 11 (x64), Linux — amd64. 32-bitli Windows qo‘llab-quvvatlanmaydi: u yerda
+o‘rnatuvchi «This installation package is not supported by this processor type» xatosini beradi, `ReaktivControl.exe` esa
+ochilmaydi. Tekshirish: **Sozlamalar → Tizim → Haqida → «Tizim turi»** («64-bitli operatsion tizim» bo‘lishi kerak).
+
 GitHub → **Actions** → «Windows» → oxirgi muvaffaqiyatli ishga tushirish → **ReaktivControl-Windows-msi** artefaktini yuklab oling,
 ichidagi `.msi` ni oching. Administrator huquqi kerak emas. Har yig‘ishning versiyasi yangi (`2.0.<raqam>`), yangisi eskisining (shu
 jumladan eski «Reaktivlar» dasturining) ustiga o‘rnatiladi, ma’lumotlar saqlanib qoladi. O‘rnatuvchi ishlamasa:
 **ReaktivControl-Windows-portable** artefaktini yuklab oling, zip faylni sichqonchaning o‘ng tugmasi bilan bosib
 **«Извлечь все» / «Extract All»** ni tanlang, so‘ng `ReaktivControl` papkasidagi `ReaktivControl.exe` ni ishga tushiring (zip ichidan
 to‘g‘ridan-to‘g‘ri ochilmaydi). Windows «noma’lum nashriyotchi» deb ogohlantirsa: **Batafsil → Baribir ishga tushirish**.
+O‘rnatilgandan keyin dastur **Пуск / Start** menyusida («Reaktiv Control» guruhi) va ish stolidagi yorliqda.
+
+**Windows foydalanuvchi nomida lotin bo‘lmagan harflar bo‘lsa** (masalan, `C:\Users\Ғайрат`, kirill harflari yoki `ʻ`):
+o‘rnatuvchi so‘raganda papkani **`C:\ReaktivControl`** qilib tanlang (o‘rnatuvchida papka tanlash oynasi bor) yoki portable
+zip’ni shu papkaga chiqaring. Sababi: Java ishga tushirgichi dastur yo‘lini Windows’ning eski kod sahifasiga o‘giradi va
+sig‘maydigan harfli papkadan ochilmasligi mumkin. Ma’lumotlar baribir `%APPDATA%\ReaktivControl` da qoladi. SQLite kutubxonasi
+(`sqlitejdbc.dll`) bunday kompyuterda `%TEMP%` o‘rniga `%ProgramData%\ReaktivControl\native\` ga chiqariladi — buni dastur
+o‘zi qiladi. Kutubxona baribir yuklanmasa (antivirus bloklagan bo‘lsa), dastur buni aniq aytadi va bazaga tegmaydi.
 
 Linux (Debian, Ubuntu, Kali, Mint): **ReaktivControl-Linux-deb** artefaktidagi faylni o‘rnating —
 `sudo apt install ./reaktivcontrol_*_amd64.deb` (eski `reaktivlar` paketi almashtiriladi). Menyuda «Ofis» bo‘limida yoki
@@ -184,21 +196,38 @@ cd desktop
 ./gradlew test                 # barcha testlar (Linux va Windows’da CI’da ham)
 ./gradlew run                  # dasturni ishga tushirish
 ./gradlew createDistributable  # o‘rnatuvchisiz dastur papkasi (build/compose/binaries/main/app/ReaktivControl)
-./gradlew packageMsi           # Windows o‘rnatuvchisi — faqat Windows’da (JDK 17 + WiX avtomatik yuklanadi)
-./gradlew packageDeb           # Linux .deb (Debian/Ubuntu’da)
+./gradlew packageMsi -PappVersion=2.0.<N>   # Windows o‘rnatuvchisi — faqat Windows’da (JDK 17 + WiX avtomatik yuklanadi)
+./gradlew packageDeb -PappVersion=2.0.<N>   # Linux .deb (Debian/Ubuntu’da)
 ```
 
-Windows’da EXE yig‘ish (o‘z kompyuteringizda): [Temurin JDK 17](https://adoptium.net) ni o‘rnating, repozitoriyni yuklab oling,
-`desktop` papkasida `gradlew.bat packageMsi createDistributable` ni bajaring. Natija: `build\compose\binaries\main\msi\*.msi` va
-`build\compose\binaries\main\app\ReaktivControl\ReaktivControl.exe`.
+Windows’da EXE yig‘ish (o‘z kompyuteringizda): [Temurin JDK 17 (x64)](https://adoptium.net) ni o‘rnating, repozitoriyni yuklab
+oling va `desktop` papkasida **`build-windows.bat 2.0.<N>`** ni bajaring (masalan, `build-windows.bat 2.0.501`). Skript testlarni,
+MSI o‘rnatuvchini va o‘rnatuvchisiz dastur papkasini yig‘adi va natija yo‘llarini chiqaradi:
+`build\compose\binaries\main\msi\ReaktivControl-2.0.<N>.msi` va `build\compose\binaries\main\app\ReaktivControl\ReaktivControl.exe`.
+Qo‘lda: `gradlew.bat test packageMsi createDistributable -PappVersion=2.0.<N>`.
+
+**Versiya raqami har yig‘ishda o‘sishi kerak.** MSI mahsulot kodi versiyadan olinadi: `-PappVersion` berilmasa versiya doim
+`2.0.0`, va bir xil versiyali ikkinchi MSI o‘rnatilgan dasturning ustiga o‘rnatilmaydi — Windows Installer
+«Another version of this product is already installed» (**xato 1638**) deydi yoki faqat «Tuzatish / O‘chirish» ni taklif qiladi.
+Shuning uchun `<N>` ni har safar oldingisidan katta qiling (0 dan 65535 gacha — MSI’ning uchinchi raqami bundan katta bo‘la olmaydi).
+CI `2.0.<ishga tushirish raqami>` ishlatadi: o‘z kompyuteringizda CI’dan yangi MSI ustiga o‘rnatmoqchi bo‘lsangiz, `<N>` uning
+raqamidan katta bo‘lsin. 1638 chiqsa: avval «Dasturlar va imkoniyatlar» dan eski Reaktiv Control’ni o‘chiring (ma’lumotlar
+`%APPDATA%\ReaktivControl` da qoladi) yoki kattaroq `<N>` bilan qayta yig‘ing.
 
 O‘zini tekshirish: `ReaktivControl.exe --self-test natija.txt` — vaqtinchalik papkada bazani yaratadi, kirim/sarf, bo‘lim va
 tumanlarga berish, qaytarish, bekor qilish, 12 hisobotni Excel va PDF ga, zaxira va tiklashni bajarib, natijani faylga yozadi
-(foydalanuvchi ma’lumotlariga tegmaydi). CI har yig‘ishda buni portable EXE va o‘rnatilgan MSI uchun Windows’da bajaradi.
-Testlar ro‘yxati va natijalari: [`desktop/TEST-RESULTS.md`](desktop/TEST-RESULTS.md).
+(foydalanuvchi ma’lumotlariga tegmaydi). CI har yig‘ishda buni portable EXE va o‘rnatilgan MSI uchun Windows’da bajaradi,
+shuningdek `%TEMP%` lotin bo‘lmagan harfli papkada bo‘lganda va dastur papkasi `C:\Тест Ғайрат\` ga ko‘chirilganda.
+Testlar ro‘yxati va natijalari: [`desktop/TEST-RESULTS.md`](desktop/TEST-RESULTS.md) (to‘liq ishga tushirishdan yaratilgan;
+yangilash: `cd desktop && ./gradlew test && python3 scripts/test_results.py > TEST-RESULTS.md`). CI har yig‘ishda uni qaytadan
+yaratadi — **test-report-ubuntu-latest** artefaktida va ishga tushirish sahifasining xulosasida.
 
 ### Cheklovlar
 
+- Faqat 64-bitli Windows 10/11 (x64) va 64-bitli Linux (amd64). 32-bitli Windows’da dastur ishlamaydi (dastur ishlatadigan
+  Compose/Skia grafik kutubxonasining 32-bitli versiyasi yo‘q).
+- Windows foydalanuvchi nomida lotin bo‘lmagan harflar bo‘lsa — dasturni `C:\ReaktivControl` kabi lotin harfli papkaga
+  o‘rnating (standart papka `C:\Users\<ism>\AppData\Local\…` dan ochilmasligi mumkin, yuqoridagi «O‘rnatish» ga qarang).
 - Bir kompyuterda bitta foydalanuvchi uchun (tarmoq orqali bir nechta kompyuterdan bitta bazaga yozish yo‘q). Login/parol yo‘q.
 - Dastur tili — o‘zbekcha (lotin).
 - Eski (1.0.x) jadval dasturidagi «Excel kabi» kataklarga yozish o‘rniga endi forma va jadvallar ishlatiladi.
@@ -213,7 +242,7 @@ Testlar ro‘yxati va natijalari: [`desktop/TEST-RESULTS.md`](desktop/TEST-RESUL
 | `report/` | 12 hisobot turi, Excel va PDF eksport |
 | `ui/` | Mavzu, menyu va yuqori panel, umumiy komponentlar (jadval, kalendar, diagrammalar), 13 sahifa (`ui/pages/`) |
 | `selftest/` | `--self-test` rejimi |
-| `Main.kt` | Ishga tushirish: papka, qulf, jurnal, baza, avtomatik zaxira, oyna |
+| `Main.kt` | Ishga tushirish: SQLite kutubxonasi papkasi, papka, qulf, jurnal, baza (kutubxona yuklanmasa — aniq xabar), eski jadvaldan ko‘chirish, avtomatik zaxira, oyna |
 
 ## Testlar
 

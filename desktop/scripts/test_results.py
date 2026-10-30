@@ -8,6 +8,7 @@ Ishga tushmagan test «o‘tdi» deb ko‘rsatilmaydi — «ishga tushmagan» de
 """
 import glob
 import os
+import platform
 import sys
 import xml.etree.ElementTree as ET
 from datetime import datetime
@@ -111,7 +112,9 @@ def main():
     counts = {k: sum(1 for v in results.values() if v == k) for k in ("passed", "failed", "skipped")}
     out = []
     out.append("# Testlar natijasi — Reaktiv Control\n")
-    out.append(f"Yaratilgan: {datetime.now().strftime('%d.%m.%Y %H:%M')} · manba: `./gradlew test` (JUnit XML).\n")
+    # Qaysi tizimdagi natija ekani (Linux natijasi Windows’dagini almashtirmaydi — CI ikkalasida ham ishga tushiradi).
+    where = f"tizim: {platform.system()} {platform.machine()}" if len(sys.argv) < 2 else "kataloglar: " + ", ".join(f"`{d}`" for d in dirs)
+    out.append(f"Yaratilgan: {datetime.now().strftime('%d.%m.%Y %H:%M')} · manba: `./gradlew test` (JUnit XML) · {where}.\n")
     out.append(f"Jami **{len(results)}** test: {counts['passed']} o‘tdi, {counts['failed']} yiqildi, {counts['skipped']} o‘tkazib yuborildi.\n")
     out.append("## Topshiriqning 18-bandi: majburiy testlar\n")
     out.append("| № | Holat | Testlar | Natija |")

@@ -40,6 +40,14 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - name: Tests
         run: ./gradlew --no-daemon test
+      # Topshiriq 18-bandi: har bir testning haqiqiy natijasi (ishga tushmagani «o‘tdi» deb yozilmaydi).
+      # Faqat Linux’da: skript ✅/❌ chiqaradi, Windows Python’ining stdout’i UTF-8 bo‘lmasligi mumkin.
+      - name: Test results report (TEST-RESULTS.md)
+        if: always() && matrix.os == 'ubuntu-latest'
+        run: |
+          mkdir -p build
+          python3 scripts/test_results.py > build/TEST-RESULTS.md
+          cat build/TEST-RESULTS.md >> "$GITHUB_STEP_SUMMARY"
       - name: Upload test report
         if: always()
         uses: actions/upload-artifact@v4
@@ -48,6 +56,7 @@ jobs:
           path: |
             desktop/build/reports/tests/test/
             desktop/build/test-results/test/*.xml
+            desktop/build/TEST-RESULTS.md
           if-no-files-found: ignore
 
   deb:
@@ -134,6 +143,59 @@ jobs:
           $p = Start-Process -FilePath $exe -ArgumentList @('--self-test', "`"$out`"") -Wait -PassThru
           if (Test-Path $out) { Get-Content $out -Encoding UTF8 }
           if ($p.ExitCode -ne 0) { Write-Error "Self-test muvaffaqiyatsiz: $($p.ExitCode)"; exit 1 }
+      # Windows foydalanuvchi nomida lotin bo'lmagan harflar (kirill, Ғ/Қ/Ҳ): %TEMP% ham shunday papkada bo'ladi.
+      # sqlite-jdbc DLL'ini %TEMP% ga chiqaradi, JVM esa DLL yo'lini tizim kod sahifasiga (bu yerda Cp1252) o'giradi —
+      # dastur buni sezib, kutubxonani ASCII papkaga (%ProgramData%\ReaktivControl\native) chiqarishi kerak.
+      - name: Self-test with TEMP/TMP in a folder with Cyrillic letters and spaces
+        shell: pwsh
+        timeout-minutes: 5
+        run: |
+          # "Ғайрат Темп" — kod nuqtalaridan (skript faylining kodlashiga bog'liq bo'lmasin).
+          $name = [string]::new([char[]]@(0x0492, 0x0430, 0x0439, 0x0440, 0x0430, 0x0442, 0x20, 0x0422, 0x0435, 0x043C, 0x043F))
+          $tmp = Join-Path $env:RUNNER_TEMP $name
+          New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+          $env:TEMP = $tmp
+          $env:TMP = $tmp
+          Write-Host "TEMP=$env:TEMP"
+          $out = Join-Path $env:RUNNER_TEMP 'selftest-unicode-temp.txt'
+          $exe = Resolve-Path 'build/compose/binaries/main/app/ReaktivControl/ReaktivControl.exe'
+          $p = Start-Process -FilePath $exe -ArgumentList @('--self-test', "`"$out`"") -PassThru
+          $null = $p.Handle
+          if (-not $p.WaitForExit(180000)) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue; Write-Error "Self-test 180 s ichida tugamadi"; exit 1 }
+          if (Test-Path $out) { Get-Content $out -Encoding UTF8 } else { Write-Error "Self-test natija fayli yozilmadi"; exit 1 }
+          if ($p.ExitCode -ne 0) { Write-Error "Lotin bo'lmagan %TEMP% bilan self-test o'tmadi: $($p.ExitCode)"; exit 1 }
+          if (-not (Select-String -Path $out -Encoding UTF8 -SimpleMatch -Pattern '(org.sqlite.tmpdir)' -Quiet)) {
+            Write-Error "SQLite kutubxonasi ASCII papkaga yo'naltirilmadi"; exit 1
+          }
+      # Dastur papkasining o'zi lotin bo'lmagan harfli yo'lda (masalan, C:\Users\Ғайрат\AppData\Local\ReaktivControl).
+      # jpackage ishga tushirgichi (JDK 17) yo'lni tizim kod sahifasiga o'giradi (JDK-8205991) — shuning uchun README
+      # bunday kompyuterda C:\ReaktivControl ga o'rnatishni aytadi. Bu qadam shu cheklovni har yig'ishda tekshiradi:
+      # dastur ishga tushib self-test yiqilsa — xato; ishga tushirgichning o'zi ochilmasa — ogohlantirish (ma'lum cheklov).
+      - name: Portable app copied to a folder with Cyrillic letters and spaces
+        shell: pwsh
+        timeout-minutes: 5
+        run: |
+          # "C:\Тест Ғайрат\ReaktivControl" — kod nuqtalaridan.
+          $name = [string]::new([char[]]@(0x0422, 0x0435, 0x0441, 0x0442, 0x20, 0x0492, 0x0430, 0x0439, 0x0440, 0x0430, 0x0442))
+          $root = Join-Path 'C:\' $name
+          $dir = Join-Path $root 'ReaktivControl'
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+          Copy-Item -Recurse -Force -Path 'build/compose/binaries/main/app/ReaktivControl' -Destination $dir
+          $exe = Join-Path $dir 'ReaktivControl.exe'
+          if (-not (Test-Path -LiteralPath $exe)) { Write-Error "Nusxa olinmadi: $exe"; exit 1 }
+          Write-Host "Dastur: $exe"
+          $out = Join-Path $env:RUNNER_TEMP 'selftest-cyrillic-folder.txt'
+          $p = Start-Process -FilePath $exe -ArgumentList @('--self-test', "`"$out`"") -PassThru
+          $null = $p.Handle
+          $finished = $p.WaitForExit(120000)
+          if (-not $finished) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
+          if (Test-Path $out) {
+            Get-Content $out -Encoding UTF8
+            if (-not $finished -or $p.ExitCode -ne 0) { Write-Error "Dastur ishga tushdi, lekin self-test o'tmadi: $($p.ExitCode)"; exit 1 }
+            Write-Host "Lotin bo'lmagan harfli papkadan ham ishladi."
+          } else {
+            Write-Host "::warning title=Lotin bo'lmagan harfli papka::Dastur bu papkadan ishga tushmadi (jpackage ishga tushirgichi, JDK-8205991; chiqish kodi: $(if ($finished) { $p.ExitCode } else { 'vaqt tugadi' })). README: bunday kompyuterda C:\ReaktivControl ga o'rnating."
+          }
       - name: Install the MSI, self-test the installed app, uninstall
         shell: pwsh
         run: |

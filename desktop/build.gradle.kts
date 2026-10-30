@@ -128,6 +128,8 @@ compose.desktop {
             modules("java.instrument", "jdk.unsupported", "java.sql", "java.logging", "java.xml", "java.desktop")
 
             windows {
+                // Start menyusida «Reaktiv Control» guruhida yorliq (menuGroup faqat menu = true bo‘lsa ishlaydi).
+                menu = true
                 menuGroup = "Reaktiv Control"
                 shortcut = true
                 dirChooser = true
