@@ -15,7 +15,8 @@ import java.time.LocalDate
 /**
  * Hisobot → .xlsx (fastexcel). Tepada sarlavha, tashkilot, yaratilgan vaqt va filtrlar; so‘ng jadval: sarlavha qatori
  * (qalin, to‘q ko‘k fonda oq), haqiqiy sana kataklari (dd.mm.yyyy), son kataklari, holat katagi o‘z rangida,
- * qator holat rangida och tusda. Sarlavha qatori qotirilgan, avtofiltr yoqilgan, chop etish — A4 albom, eniga sig‘adi.
+ * qator holat rangida och tusda, matn kataklari ustun ichida qatorlarga bo‘linadi (kesilmaydi). Sarlavha qatori qotirilgan,
+ * avtofiltr yoqilgan, chop etish — A4 albom, eniga sig‘adi.
  */
 object ExcelExport {
     /** Excel varaq nomi chegarasi. */
@@ -107,6 +108,9 @@ object ExcelExport {
                 ReportColumnType.TEXT -> {
                     val text = value?.toString().orEmpty()
                     if (text.isNotEmpty()) ws.value(r, c, text)
+                    // Uzun matn (nom, tashkilot, izoh) qo‘shni katak bilan kesilmasin: ustun ichida qatorlarga bo‘linadi
+                    // (qator balandligi berilmagan — Excel/LibreOffice o‘zi moslaydi).
+                    style = style.wrapText(true)
                 }
                 ReportColumnType.DATE -> {
                     (value as? LocalDate)?.let { ws.value(r, c, it) }

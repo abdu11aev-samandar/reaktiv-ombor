@@ -46,7 +46,8 @@ class PlacesQueries(private val queries: Queries) {
 
     /**
      * [Queries.departmentSummary] + reaktiv nomi bo‘yicha filtr ([reagentText] — nomning bir qismi, katta-kichik harf va
-     * tutuq belgisi farqsiz). Bo‘limga berilganlar jamlari filtrlangan berishlardan qayta hisoblanadi.
+     * tutuq belgisi farqsiz). Bo‘limga berilganlar jamlari filtrlangan berishlardan qayta hisoblanadi. Davr bo‘yicha jamilar
+     * [departmentHistory] va «Davr uchun reaktivlar harakati» bilan bir xil: qaytarilgan — davrdagi qaytarishlar.
      */
     fun departmentSummary(
         departmentId: Long,
@@ -58,11 +59,13 @@ class PlacesQueries(private val queries: Queries) {
         val base = queries.departmentSummary(departmentId, from, to, today)
         if (reagentText.isNullOrBlank()) return base
         val history = base.history.filter { reagentMatches(reagentText, it.name) }
+        val earlier = base.earlierReturns.filter { reagentMatches(reagentText, it.name) }
         return DepartmentSummary(
             department = base.department,
             ownedBatches = base.ownedBatches.filter { reagentMatches(reagentText, it.name) },
-            issuedTo = totalsByReagent(history),
+            issuedTo = totalsByReagent(history, earlier),
             history = history,
+            earlierReturns = earlier,
         )
     }
 
@@ -126,7 +129,8 @@ class PlacesQueries(private val queries: Queries) {
 
     /**
      * [Queries.districtSummary] + reaktiv nomi bo‘yicha filtr. [districtId] null — barcha tumanlar. Tuman va reaktiv
-     * jamlari filtrlangan berishlardan qayta hisoblanadi (o‘lchov turlari qo‘shilmaydi).
+     * jamlari filtrlangan berishlar va davrdan oldingi berishlarning davrdagi qaytarishlaridan qayta hisoblanadi
+     * (o‘lchov turlari qo‘shilmaydi).
      */
     fun districtSummary(
         districtId: Long? = null,
@@ -137,21 +141,8 @@ class PlacesQueries(private val queries: Queries) {
         val base = queries.districtSummary(districtId, from, to)
         if (reagentText.isNullOrBlank()) return base
         val items = base.items.filter { reagentMatches(reagentText, it.name) }
-        val byDistrict = items.groupBy { it.districtId!! }
-        val districts = byDistrict.map { (id, list) ->
-            DistrictTotal(
-                districtId = id,
-                name = list.first().districtName.orEmpty(),
-                items = list.size,
-                firstDate = list.minOfOrNull { it.issuedOn },
-                lastDate = list.maxOfOrNull { it.issuedOn },
-                net = list.groupBy { it.unit.dimension }.mapValues { (_, l) -> l.sumOf { it.netQty } },
-            )
-        }.sortedWith(compareBy({ nameKey(it.name) }, { it.districtId }))
-        val perReagent = byDistrict.flatMap { (id, list) ->
-            totalsByReagent(list).map { DistrictReagentTotal(id, list.first().districtName.orEmpty(), it) }
-        }.sortedWith(compareBy({ nameKey(it.districtName) }, { nameKey(it.total.name) }, { it.total.dimension.ordinal }))
-        return DistrictSummary(districts, perReagent, items)
+        val earlier = base.earlierReturns.filter { reagentMatches(reagentText, it.name) }
+        return Queries.districtSummaryOf(items, earlier)
     }
 
     companion object {
@@ -164,20 +155,8 @@ class PlacesQueries(private val queries: Queries) {
         private fun inRange(date: LocalDate, from: LocalDate?, to: LocalDate?): Boolean =
             (from == null || date >= from) && (to == null || date <= to)
 
-        /** Reaktiv + o‘lchov turi bo‘yicha jamlar (Queries dagi bilan bir xil qoida). */
-        internal fun totalsByReagent(items: List<IssueItemRow>): List<ReagentQtyTotal> =
-            items.groupBy { it.reagentId to it.unit.dimension }.map { (key, list) ->
-                ReagentQtyTotal(
-                    reagentId = key.first,
-                    name = list.first().name,
-                    dimension = key.second,
-                    unit = MeasureUnit.largest(list.map { it.unit })!!,
-                    issued = list.sumOf { it.qty },
-                    returned = list.sumOf { it.returnedQty },
-                    items = list.size,
-                    firstDate = list.minOfOrNull { it.issuedOn },
-                    lastDate = list.maxOfOrNull { it.issuedOn },
-                )
-            }.sortedWith(compareBy({ nameKey(it.name) }, { it.dimension.ordinal }))
+        /** Reaktiv + o‘lchov turi bo‘yicha jamlar (Queries dagi qoida bilan, [earlier] — davrdan oldingi berishlarning qaytarishlari). */
+        internal fun totalsByReagent(items: List<IssueItemRow>, earlier: List<ReturnRow> = emptyList()): List<ReagentQtyTotal> =
+            Queries.totalsByReagent(items, earlier)
     }
 }

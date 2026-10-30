@@ -71,6 +71,12 @@ class LegacyImport(
     /** Ko‘chirish allaqachon bajarilganmi (avtomatik yoki qo‘lda). */
     fun isDone(): Boolean = settings.get(Settings.LEGACY_IMPORT) != null
 
+    /**
+     * Oxirgi muvaffaqiyatli ko‘chirishning BARCHA izohlari (app_settings `legacy_import_notes`) — natija xabari yopilgandan
+     * keyin ham ko‘rish uchun (masalan, «Ma’lumotlarni zaxiralash» sahifasida). Ko‘chirish bo‘lmagan bo‘lsa — bo‘sh.
+     */
+    fun lastNotes(): List<String> = settings.get(Settings.LEGACY_IMPORT_NOTES).orEmpty().split('\n').filter { it.isNotBlank() }
+
     /** Eski fayl: avval yangi jadval, so‘ng uning zaxirasi, eski dastur fayli va uning zaxirasi — o‘qiladiganining birinchisi. */
     fun findLegacyFile(): Path? {
         val base = System.getProperty(PROPERTY)?.takeIf { it.isNotBlank() }?.let { Paths.get(it) }
@@ -172,11 +178,15 @@ class LegacyImport(
             val now = clock.now()
             settings.put(conn, Settings.LEGACY_IMPORT, "$now|${path.fileName}")
             settings.put(conn, Settings.LEGACY_IMPORT_HASHES, (done + hash).joinToString(","))
+            // Izohlar doimiy saqlanadi (natija xabari yopilgach ham): har biri bitta qatorda.
+            val noteLines = notes.map { it.replace(Regex("\\s+"), " ").trim() }.filter { it.isNotEmpty() }
+            settings.put(conn, Settings.LEGACY_IMPORT_NOTES, noteLines.joinToString("\n"))
             audit.log(
                 conn, AuditAction.LEGACY_IMPORTED, "legacy", null,
                 "Fayl: ${path.fileName}; ko‘chirildi: $imported ta partiya; o‘tkazib yuborildi: $skipped ta qator" +
                     (if (already > 0) " (shundan allaqachon ko‘chirilgan: $already ta)" else "") +
-                    (if (newer != null) ". $newer" else ""),
+                    (if (newer != null) ". $newer" else "") +
+                    (if (noteLines.isNotEmpty()) ". Izohlar (${noteLines.size} ta):\n" + noteLines.joinToString("\n") else ""),
             )
         }
         log.info("legacy import done imported=$imported skipped=$skipped already=$already")
@@ -324,6 +334,17 @@ class LegacyImport(
                 " — kirim ${date.display()} bilan yozildi, asl qiymati partiya izohida."
         }
 
+        val initial = maxOf(received ?: 0L, stock ?: 0L)
+        val inStock = stock ?: initial
+        var given = issued ?: 0L
+        if (given > inStock) {
+            // Asl berilgan miqdor partiya izohida qoladi (bazaga sig‘magan qiymat yo‘qolmasin).
+            notes += "$where: berilgan miqdor (${Qty.formatWithUnit(given, unit)}) ombordagidan ko‘p edi — " +
+                "${Qty.formatWithUnit(inStock, unit)} gacha kamaytirildi, asl qiymati partiya izohida."
+            keep("Berilgan miqdor", row.issuedAmount)
+            given = inStock
+        }
+
         val reagentId = reagents.findOrCreateReagent(conn, name, formula = "", minStock = null, note = "")
         val now = clock.now()
         val batchNote = SOURCE_NOTE + if (original.isEmpty()) "" else ". Eski jadvaldagi asl qiymatlar: " + original.distinct().joinToString("; ")
@@ -336,7 +357,6 @@ class LegacyImport(
             reagentId, produced, legacyReceived, expires, unit, department?.id, batchNote, now, now,
         )
 
-        val initial = maxOf(received ?: 0L, stock ?: 0L)
         if (initial > 0) {
             val receiptId = conn.insert(
                 """
@@ -350,14 +370,8 @@ class LegacyImport(
             notes += "$where: miqdor yo‘q — partiya qoldiqsiz qo‘shildi."
         }
         // Eski «Ombordagi miqdor» kelganidan kam bo‘lsa — farq moslash yozuvi bilan (tarix ko‘rinib turadi).
-        val inStock = stock ?: initial
         if (inStock < initial) {
             insertMovement(conn, batchId, "ADJUSTMENT", -(initial - inStock), date, now, note = ADJUST_NOTE)
-        }
-        var given = issued ?: 0L
-        if (given > inStock) {
-            notes += "$where: berilgan miqdor ombordagidan ko‘p edi — ${Qty.formatWithUnit(inStock, unit)} gacha kamaytirildi."
-            given = inStock
         }
         if (given > 0) {
             if (department != null) {

@@ -1,6 +1,7 @@
 package uz.reaktivombor.desktop.service
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import uz.reaktivombor.desktop.core.Dimension
@@ -185,5 +186,76 @@ class QueriesServiceTest : ServiceTestBase() {
         assertEquals(1, services.queries.auditLogs(AuditFilter(text = "muddati o‘tgan", action = AuditAction.WRITE_OFF)).size)
         assertTrue(services.queries.auditLogs(AuditFilter(from = today.plusDays(1))).isEmpty())
         assertEquals(5, services.queries.auditLogs(AuditFilter(action = AuditAction.BATCH_CREATED)).size)
+    }
+
+    @Test
+    fun belowMinimumComparesTheMinimumWithNonExpiredStock() {
+        // Kumush nitrat: yagona partiya (50 g) muddati o‘tgan, minimal 20 g — ishlatib bo‘ladigan qoldiq 0, demak kam.
+        val kn = newBatch("Kumush nitrat", "KN-09", today.minusDays(5), "50", unit = G, received = today.minusDays(200), minStock = "20", minStockUnit = G)
+        val row = row(kn)
+        assertEquals(G.factor * 50, row.groupTotal)
+        assertEquals(0L, row.groupUsable)
+        assertTrue(row.belowMin)
+        val total = services.queries.stockTotals(today = today).single()
+        assertTrue(total.belowMin)
+        assertEquals(0L, total.usableRemainder)
+        assertEquals(G.factor * 50, total.remainder)
+        assertEquals(1, services.queries.dashboard(today).belowMinReagents)
+        val note = services.queries.notifications(today).single { it.kind == NotificationKind.BELOW_MIN }
+        assertEquals("«Kumush nitrat»: yaroqli qoldiq 0 g (muddati o‘tgan 50 g) — minimal 20 g dan kam", note.text)
+
+        // Aralash: muddati o‘tgan 50 g + yaroqli 5 g < 20 g — baribir kam; yaroqli 25 g bo‘lsa — yetarli.
+        val fresh = newBatch("Kumush nitrat", "KN-10", today.plusDays(200), "5", unit = G)
+        assertTrue(row(fresh).belowMin)
+        assertEquals(G.factor * 5, row(fresh).groupUsable)
+        services.stock.addReceipt(fresh, ReceiptInput(today, "20", G))
+        assertFalse(row(fresh).belowMin)
+        assertEquals(0, services.queries.dashboard(today).belowMinReagents)
+        assertTrue(services.queries.notifications(today).none { it.kind == NotificationKind.BELOW_MIN })
+    }
+
+    @Test
+    fun dashboardRecentOperationsAreOrderedByOperationDate() {
+        // Kiritilish tartibi sanalar tartibi emas (eski hujjatlar keyin kiritilgan).
+        val a = newBatch("Etil spirti", "ES-001", today.plusDays(300), "5", received = today.minusDays(30))
+        newBatch("Aseton", "A-1", today.plusDays(300), "5", received = today.minusDays(2))
+        newBatch("Fenol", "F-1", today.plusDays(300), "5", received = today.minusDays(60))
+        newBatch("Xloroform", "X-1", today.plusDays(300), "5", received = today.minusDays(2))
+        issueTo("Biologiya", a, "100", ML, date = today.minusDays(1))
+        issueTo("Gistologiya", a, "200", ML, date = today.minusDays(20))
+        issueTo("Sud-kimyo", a, "300", ML, date = today.minusDays(1))
+        val d = services.queries.dashboard(today)
+        assertEquals(listOf("Xloroform", "Aseton", "Etil spirti", "Fenol"), d.recentReceipts.map { it.name })
+        assertEquals(listOf(today.minusDays(2), today.minusDays(2), today.minusDays(30), today.minusDays(60)), d.recentReceipts.map { it.receivedOn })
+        assertEquals(listOf("Sud-kimyo", "Biologiya", "Gistologiya"), d.recentIssues.map { it.recipientName })
+    }
+
+    @Test
+    fun batchRowsAndStockTotalsShowReturnedNextToNetIssued() {
+        val b = newBatch("Etil spirti", "ES-001", today.plusDays(300), "10", received = today.minusDays(30), produced = today.minusDays(60))
+        issueTo("Gistologiya", b, "3", L, date = today.minusDays(10))
+        issueTo("Biologiya", b, "1", L, date = today.minusDays(5))
+        val item = services.queries.issueItems(OpFilter(departmentId = deptId("Gistologiya"))).single()
+        services.stock.returnItem(item.id, ReturnInput(today, "500", ML))
+        // Bekor qilingan qaytarish hisobga olinmaydi.
+        val wrong = services.stock.returnItem(item.id, ReturnInput(today, "100", ML))
+        services.stock.cancelReturn(wrong, "Xato")
+        services.stock.writeOff(b, today, "1", L, "To‘kildi")
+        val r = row(b)
+        assertEquals(litres("3,5"), r.issuedQty) // sof
+        assertEquals(ml("500"), r.returnedQty)
+        assertEquals(litres("4"), r.issuedQty + r.returnedQty) // berilgan jami
+        assertEquals(r.receivedQty - r.issuedQty - r.writtenOffQty, r.remainder)
+        val total = services.queries.stockTotals(today = today).single()
+        assertEquals(ml("500"), total.returned)
+        assertEquals(litres("3,5"), total.issued)
+        // Kirim ro‘yxatida partiyaning ishlab chiqarilgan sanasi ham bor.
+        assertEquals(today.minusDays(60), services.queries.receipts().single().producedOn)
+        // Berish qatorida: davr oxirigacha qaytarilgan va hammasi.
+        val until = services.queries.issueItems(OpFilter(departmentId = deptId("Gistologiya"), returnsUntil = today.minusDays(1))).single()
+        assertEquals(0L, until.returnedQty)
+        assertEquals(ml("500"), until.returnedTotal)
+        assertEquals(litres("2,5"), until.returnableQty)
+        assertEquals(ml("500"), services.queries.issueItems(OpFilter(departmentId = deptId("Gistologiya"))).single().returnedQty)
     }
 }

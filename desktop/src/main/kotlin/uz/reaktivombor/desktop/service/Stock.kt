@@ -159,6 +159,16 @@ class Stock(
         val storage = errors.capture("storageLocation") { shortText(input.storageLocation, "Saqlash joyi", 255, "storageLocation") } ?: ""
         val docNo = errors.capture("docNo") { shortText(input.docNo, "Hujjat raqami", 100, "docNo") } ?: ""
         val note = errors.capture("note") { longText(input.note, "Izoh", 2000, "note") } ?: ""
+        // Qo‘shimcha kirim partiya kelgan sanadan (eski ma’lumotda kelgan sana bo‘lmasa — ishlab chiqarilgan sanadan) oldin
+        // bo‘lolmaydi. Boshlang‘ich kirimning sanasi — partiyaning kelgan sanasi (u checkInitialDate bilan tekshiriladi).
+        if (!isInitial && date != null) {
+            val floor = batch.receivedOn
+                ?: conn.queryOne("SELECT produced_on FROM batches WHERE id = ?", batchId) { rs -> rs.date("produced_on") }
+            if (floor != null && date < floor) {
+                val what = if (batch.receivedOn != null) "partiya kelgan sanadan" else "partiya ishlab chiqarilgan sanadan"
+                errors.add("date", "Kirim sanasi (${date.display()}) $what (${floor.display()}) oldin bo‘lishi mumkin emas.")
+            }
+        }
         errors.throwIfAny()
         date!!
         qty!!
@@ -360,15 +370,21 @@ class Stock(
                 val place = when {
                     line.districtId != null ->
                         directory.find(conn, PlaceKind.DISTRICT, line.districtId) ?: throw UserError(cap(p, "tuman topilmadi."), "districtId")
+                    // Nofaol tuman nomi yozilsa — jimgina faollashtirilmaydi (nofaol qilish va'dasi buzilmasin), rad etiladi.
                     !line.districtName.isNullOrBlank() ->
                         try {
-                            directory.findOrCreate(conn, PlaceKind.DISTRICT, line.districtName, reactivate = true)
+                            directory.findOrCreate(conn, PlaceKind.DISTRICT, line.districtName, reactivate = false)
                         } catch (e: UserError) {
                             throw UserError(p + e.message, "districtName")
                         }
                     else -> throw UserError(cap(p, "qaysi tumanga berilishini tanlang yoki yozing."), "districtName")
                 }
-                if (!place.active) throw UserError("$p«${place.name}» tumani nofaol.", "districtId")
+                if (!place.active) {
+                    throw UserError(
+                        "$p«${place.name}» tumani nofaol — unga berib bo‘lmaydi. Avval «Tumanlarga berilgan reaktivlar» sahifasida faollashtiring.",
+                        if (line.districtId != null) "districtId" else "districtName",
+                    )
+                }
                 districtId = place.id
                 recipientName = "${place.name} tumani"
             }

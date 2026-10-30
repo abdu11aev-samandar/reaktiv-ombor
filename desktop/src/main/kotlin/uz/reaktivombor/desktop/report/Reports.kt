@@ -10,6 +10,7 @@ import uz.reaktivombor.desktop.core.display
 import uz.reaktivombor.desktop.core.nameKey
 import uz.reaktivombor.desktop.service.BatchFilter
 import uz.reaktivombor.desktop.service.BatchRow
+import uz.reaktivombor.desktop.service.IssueItemRow
 import uz.reaktivombor.desktop.service.LedgerRow
 import uz.reaktivombor.desktop.service.MovementKind
 import uz.reaktivombor.desktop.service.OpFilter
@@ -17,6 +18,7 @@ import uz.reaktivombor.desktop.service.Place
 import uz.reaktivombor.desktop.service.PlaceKind
 import uz.reaktivombor.desktop.service.Reagent
 import uz.reaktivombor.desktop.service.RecipientType
+import uz.reaktivombor.desktop.service.ReturnRow
 import uz.reaktivombor.desktop.service.Services
 import uz.reaktivombor.desktop.service.StockTotal
 import java.io.OutputStream
@@ -208,8 +210,15 @@ class ReportBuilder(private val services: Services) {
             if (label != null && (from != null || to != null)) lines += "$label: " + period(from, to)
             (resolvedName ?: name)?.let { lines += "Reaktiv: $it" }
             series?.let { lines += "Seriya: $it" }
-            department?.let { lines += "Bo‘lim: ${it.name}" }
-            district?.let { lines += "Tuman: ${it.name}" }
+            val dept = department
+            val dist = district
+            if (dept != null && dist != null) {
+                // Berish qatorida qabul qiluvchi bitta: ikkalasi tanlansa — «bo‘lim yoki tuman».
+                lines += "Bo‘lim: ${dept.name} yoki Tuman: ${dist.name}"
+            } else {
+                dept?.let { lines += "Bo‘lim: ${it.name}" }
+                dist?.let { lines += "Tuman: ${it.name}" }
+            }
             if (lines.isEmpty()) lines += "Filtr: yo‘q"
             return lines
         }
@@ -226,15 +235,17 @@ class ReportBuilder(private val services: Services) {
             col("№", INT, 5), col("Reaktiv nomi", TEXT, 28), col("Seriya raqami", TEXT, 14),
             col("Bo‘lim / saqlash joyi", TEXT, 20), col("Ishlab chiqarilgan sana", DATE, 12), col("Kelgan sana", DATE, 12),
             col("Yaroqlilik muddati", DATE, 12), col("Qolgan kunlar", INT, 9), col("Holati", STATUS, 17),
-            col("Kelgan miqdor", QTY, 11), col("Jami berilgan miqdor", QTY, 11), col("Joriy qoldiq", QTY, 11),
-            col("Birlik", TEXT, 7), col("Umumiy qoldiq (shu nom)", TEXT, 14), col("Mas’ul xodim", TEXT, 16),
+            // Kelgan − jami berilgan − hisobdan chiqarilgan = joriy qoldiq (har qatorda tekshirib bo‘ladi).
+            col("Kelgan miqdor", QTY, 11), col("Jami berilgan miqdor", QTY, 11), col("Hisobdan chiqarilgan", QTY, 11),
+            col("Joriy qoldiq", QTY, 11), col("Birlik", TEXT, 7), col("Umumiy qoldiq (shu nom)", TEXT, 14), col("Mas’ul xodim", TEXT, 16),
         )
         val out = rows.mapIndexed { index, r ->
             ReportRow(
                 listOf(
                     (index + 1).toLong(), r.name, r.series, placeText(r.departmentName, r.storageLocation), r.producedOn,
                     r.receivedOn, r.expiresOn, r.daysLeft, r.state, qty(r.receivedQty, r.unit), qty(r.issuedQty, r.unit),
-                    qty(r.remainder, r.unit), r.unit.code, Qty.formatWithUnit(r.groupTotal, r.groupUnit), r.responsible,
+                    qty(r.writtenOffQty, r.unit), qty(r.remainder, r.unit), r.unit.code, Qty.formatWithUnit(r.groupTotal, r.groupUnit),
+                    r.responsible,
                 ),
                 state = r.state,
             )
@@ -246,8 +257,31 @@ class ReportBuilder(private val services: Services) {
         return Body(columns, out, footer)
     }
 
-    private fun batches(ctx: Context): Body {
-        val rows = batchRows(ctx, BatchFilter(departmentId = ctx.department?.id, receivedFrom = ctx.from, receivedTo = ctx.to))
+    private fun batches(ctx: Context): Body =
+        batchesBody(batchRows(ctx, BatchFilter(departmentId = ctx.department?.id, receivedFrom = ctx.from, receivedTo = ctx.to)))
+
+    /**
+     * «Reaktivlarning partiyalar bo‘yicha ro‘yxati» aynan berilgan [rows] dan (masalan, «Barcha reaktivlar» sahifasida
+     * ekranda ko‘rinib turgan partiyalar) — [ReportKind.BATCHES] hisoboti bilan bir xil ustun, guruh jami va pastki qatorlar.
+     * [filterLines] — fayldagi filtr qatorlari (bo‘sh bo‘lsa — "Filtr: yo‘q"). Qatorlarning holati va qolgan kunlari
+     * ularni olgan so‘rovdagi kun ([today] — `queries.batchRows(filter, today)` dagi kun) bo‘yicha; yaratilgan vaqt soatdan.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    fun buildBatches(rows: List<BatchRow>, filterLines: List<String>, today: LocalDate = services.today()): ReportData {
+        val body = batchesBody(rows)
+        return ReportData(
+            kind = ReportKind.BATCHES,
+            title = ReportKind.BATCHES.title,
+            orgName = services.settings.orgName,
+            generatedAt = LocalDateTime.now(services.clock).truncatedTo(ChronoUnit.SECONDS),
+            filterLines = filterLines.filter { it.isNotBlank() }.ifEmpty { listOf("Filtr: yo‘q") },
+            columns = body.columns,
+            rows = body.rows,
+            footerLines = body.footer,
+        )
+    }
+
+    private fun batchesBody(rows: List<BatchRow>): Body {
         val columns = listOf(
             col("№", INT, 5), col("Reaktiv nomi", TEXT, 26), col("Seriya raqami", TEXT, 14), col("Ishlab chiqaruvchi", TEXT, 16),
             col("Kelgan sana", DATE, 12), col("Yaroqlilik muddati", DATE, 12), col("Qolgan kunlar", INT, 9),
@@ -323,66 +357,115 @@ class ReportBuilder(private val services: Services) {
             col("Holati", STATUS, 17),
         )
         val all = batchRows(ctx, BatchFilter(includeEmpty = false))
-        val issued = services.queries.issueItems(OpFilter(from = ctx.from, to = ctx.to, recipientType = RecipientType.DEPARTMENT))
-            .filter { ctx.nameOk(it.name) && ctx.seriesOk(it.series) }
+        // Davr: berilgan — davrdagi berishlar; qaytarilgan — davrdagi qaytarishlar (davrdan oldingi berishlarniki ham,
+        // davr oxiridan keyingilari emas) — «Davr uchun reaktivlar harakati» bilan bir xil.
+        val issued = services.queries.issueItems(
+            OpFilter(from = ctx.from, to = ctx.to, recipientType = RecipientType.DEPARTMENT, returnsUntil = ctx.to),
+        ).filter { ctx.nameOk(it.name) && ctx.seriesOk(it.series) }
+        val earlier = earlierReturns(ctx, RecipientType.DEPARTMENT)
         val out = mutableListOf<ReportRow>()
         val footer = mutableListOf<String>()
         var number = 0
         for (dept in departments) {
             val owned = all.filter { it.departmentId == dept.id }
             val given = issued.filter { it.departmentId == dept.id }
-            if (owned.isEmpty() && given.isEmpty()) continue
+            val back = earlier.filter { it.departmentId == dept.id }
+            if (owned.isEmpty() && given.isEmpty() && back.isEmpty()) continue
             val keys = (owned.map { Triple(nameKey(it.name), it.reagentId, it.unit.dimension) } +
-                given.map { Triple(nameKey(it.name), it.reagentId, it.unit.dimension) })
+                given.map { Triple(nameKey(it.name), it.reagentId, it.unit.dimension) } +
+                back.map { Triple(nameKey(it.name), it.reagentId, it.unit.dimension) })
                 .distinct()
                 .sortedWith(compareBy({ it.first }, { it.third.ordinal }))
             for ((_, reagentId, dimension) in keys) {
                 val o = owned.filter { it.reagentId == reagentId && it.unit.dimension == dimension }
                 val g = given.filter { it.reagentId == reagentId && it.unit.dimension == dimension }
-                val unit = MeasureUnit.largest(o.map { it.unit } + g.map { it.unit })!!
+                val b = back.filter { it.reagentId == reagentId && it.unit.dimension == dimension }
+                val unit = MeasureUnit.largest(o.map { it.unit } + g.map { it.unit } + b.map { it.unit })!!
                 val worst = o.maxByOrNull { it.state.severity }?.state
+                val issuedQty = g.sumOf { it.qty }
+                val returnedQty = g.sumOf { it.returnedQty } + b.sumOf { it.qty }
                 number++
                 out += ReportRow(
                     listOf(
-                        number.toLong(), dept.name, (o.firstOrNull()?.name ?: g.first().name), o.size.toLong(),
-                        qty(o.sumOf { it.remainder }, unit), qty(g.sumOf { it.qty }, unit), qty(g.sumOf { it.returnedQty }, unit),
-                        qty(g.sumOf { it.netQty }, unit), unit.code, o.mapNotNull { it.expiresOn }.minOrNull(), worst,
+                        number.toLong(), dept.name, (o.firstOrNull()?.name ?: g.firstOrNull()?.name ?: b.first().name), o.size.toLong(),
+                        qty(o.sumOf { it.remainder }, unit), qty(issuedQty, unit), qty(returnedQty, unit),
+                        qty(issuedQty - returnedQty, unit), unit.code, o.mapNotNull { it.expiresOn }.minOrNull(), worst,
                     ),
                     state = worst,
                 )
             }
             footer += "${dept.name}: qoldiq " + totalsText(owned.map { it.unit to it.remainder }) +
-                "; berilgan (sof) " + totalsText(given.map { it.unit to it.netQty })
+                "; berilgan (sof) " + totalsText(given.map { it.unit to it.netQty } + back.map { it.unit to -it.qty })
         }
         if (footer.isEmpty()) footer += "Ma’lumot topilmadi."
         return Body(columns, out, footer)
     }
 
+    /**
+     * Davrdagi har bir tumanga berish (qaytarilgani — davr oxirigacha) va davrdan oldingi berishlarning davrdagi
+     * qaytarishlari (alohida qator: «Berilgan» bo‘sh, «Sof berilgan» manfiy) — jamilar «Davr uchun reaktivlar harakati» bilan
+     * bir xil, yopilgan davr hisoboti keyingi qaytarishdan o‘zgarmaydi.
+     */
     private fun districts(ctx: Context): Body {
         val items = services.queries.issueItems(
-            OpFilter(from = ctx.from, to = ctx.to, districtId = ctx.district?.id, recipientType = RecipientType.DISTRICT),
+            OpFilter(from = ctx.from, to = ctx.to, districtId = ctx.district?.id, recipientType = RecipientType.DISTRICT, returnsUntil = ctx.to),
         ).filter { ctx.nameOk(it.name) && ctx.seriesOk(it.series) }
-            .sortedWith(compareBy({ nameKey(it.districtName.orEmpty()) }, { it.issuedOn }, { it.id }))
+        val districtId = ctx.district?.id
+        val back = earlierReturns(ctx, RecipientType.DISTRICT).filter { r -> districtId == null || r.districtId == districtId }
         val columns = listOf(
             col("№", INT, 5), col("Sana", DATE, 12), col("Tuman", TEXT, 16), col("Reaktiv nomi", TEXT, 24),
             col("Seriya raqami", TEXT, 13), col("Yaroqlilik muddati", DATE, 12), col("Berilgan", QTY, 11),
             col("Qaytarilgan", QTY, 11), col("Sof berilgan", QTY, 11), col("Birlik", TEXT, 7),
-            col("Hujjat raqami", TEXT, 12), col("Tashkilot", TEXT, 18), col("Qabul qiluvchi", TEXT, 16),
+            col("Hujjat raqami", TEXT, 12), col("Tashkilot", TEXT, 26), col("Qabul qiluvchi", TEXT, 16),
         )
-        val out = items.mapIndexed { index, it ->
-            val unit = it.enteredUnit
-            ReportRow(
+        class Line(val district: String, val date: LocalDate, val order: Int, val id: Long, val cells: (Long) -> List<Any?>)
+        val lines = items.map { item ->
+            val unit = item.enteredUnit
+            Line(item.districtName.orEmpty(), item.issuedOn, 0, item.id) { n ->
                 listOf(
-                    (index + 1).toLong(), it.issuedOn, it.districtName.orEmpty(), it.name, it.series, it.expiresOn,
-                    qty(it.qty, unit), qty(it.returnedQty, unit), qty(it.netQty, unit), unit.code, it.docNo,
-                    it.organization, it.receiver,
-                ),
-            )
+                    n, item.issuedOn, item.districtName.orEmpty(), item.name, item.series, item.expiresOn,
+                    qty(item.qty, unit), qty(item.returnedQty, unit), qty(item.netQty, unit), unit.code, item.docNo,
+                    item.organization, item.receiver,
+                )
+            }
+        } + back.map { r ->
+            val unit = r.enteredUnit
+            Line(r.recipientName, r.returnedOn, 1, r.id) { n ->
+                listOf(
+                    n, r.returnedOn, r.recipientName, r.name, r.series, r.expiresOn, null, qty(r.qty, unit), qty(-r.qty, unit),
+                    unit.code, r.docNo, listOf(r.organization, "qaytarish (${r.issuedOn.display()} dagi berishdan)")
+                        .filter { s -> s.isNotEmpty() }.joinToString(", "),
+                    r.receivedBy,
+                )
+            }
         }
-        val footer = items.groupBy { it.districtId }.values.map { list ->
-            "${list.first().districtName}: ${list.size} ta berish, sof " + totalsText(list.map { it.unit to it.netQty })
-        }.ifEmpty { listOf("Ma’lumot topilmadi.") } + "Jami: ${items.size} ta berish, sof " + totalsText(items.map { it.unit to it.netQty })
+        val out = lines.sortedWith(compareBy({ nameKey(it.district) }, { it.date }, { it.order }, { it.id }))
+            .mapIndexed { index, line -> ReportRow(line.cells((index + 1).toLong())) }
+        fun net(list: List<IssueItemRow>, returns: List<ReturnRow>) =
+            totalsText(list.map { it.unit to it.netQty } + returns.map { it.unit to -it.qty })
+        fun counts(list: List<IssueItemRow>, returns: List<ReturnRow>) =
+            "${list.size} ta berish" + if (returns.isNotEmpty()) ", oldingi berishlardan ${returns.size} ta qaytarish" else ""
+        val byDistrict = items.groupBy { it.districtId!! }
+        val backByDistrict = back.groupBy { it.districtId!! }
+        val districtNames = (items.map { it.districtId!! to it.districtName.orEmpty() } + back.map { it.districtId!! to it.recipientName })
+            .distinctBy { it.first }
+            .sortedWith(compareBy({ nameKey(it.second) }, { it.first }))
+        val footer = districtNames.map { (id, name) ->
+            val list = byDistrict[id].orEmpty()
+            val returns = backByDistrict[id].orEmpty()
+            "$name: ${counts(list, returns)}, sof " + net(list, returns)
+        }.ifEmpty { listOf("Ma’lumot topilmadi.") } + ("Jami: ${counts(items, back)}, sof " + net(items, back))
         return Body(columns, out, footer)
+    }
+
+    /**
+     * Davr ichidagi, lekin davr boshidan oldingi berishlardan qaytarishlar (nom va seriya filtri bilan; [type] — qabul
+     * qiluvchi turi, null — bo‘lim va tumanlar). Davr boshi bo‘lmasa — yo‘q (hamma berishlar davr ichida).
+     */
+    private fun earlierReturns(ctx: Context, type: RecipientType? = null): List<ReturnRow> {
+        val from = ctx.from ?: return emptyList()
+        return services.queries.returns(OpFilter(from = from, to = ctx.to, recipientType = type))
+            .filter { it.issuedOn < from && ctx.nameOk(it.name) && ctx.seriesOk(it.series) }
     }
 
     // ---------------------------------------------------------------- operatsiyalar
@@ -417,32 +500,52 @@ class ReportBuilder(private val services: Services) {
         return Body(columns, out, footer)
     }
 
+    /**
+     * Sarf qatorlari (hisobdan chiqarish ham). Bo‘lim va tuman ikkalasi tanlansa — «bo‘lim YOKI tuman» (berish qatorida
+     * qabul qiluvchi bitta). Qaytarilgani — davr oxirigacha; davrdan oldingi berishlarning davrdagi qaytarishlari — alohida
+     * «Qaytarish» qatori (jami sarfdan ayiriladi), «Davr uchun reaktivlar harakati» bilan bir xil.
+     */
     private fun issues(ctx: Context): Body {
-        val list = services.queries.issueItems(
-            OpFilter(from = ctx.from, to = ctx.to, departmentId = ctx.department?.id, districtId = ctx.district?.id),
-        ).filter { ctx.nameOk(it.name) && ctx.seriesOk(it.series) }
-            .sortedWith(compareBy({ it.issuedOn }, { it.id }))
+        val dept = ctx.department?.id
+        val dist = ctx.district?.id
+        fun recipientOk(departmentId: Long?, districtId: Long?): Boolean =
+            (dept == null && dist == null) || (dept != null && departmentId == dept) || (dist != null && districtId == dist)
+        val list = services.queries.issueItems(OpFilter(from = ctx.from, to = ctx.to, returnsUntil = ctx.to))
+            .filter { recipientOk(it.departmentId, it.districtId) && ctx.nameOk(it.name) && ctx.seriesOk(it.series) }
+        val back = earlierReturns(ctx).filter { recipientOk(it.departmentId, it.districtId) }
         val columns = listOf(
             col("№", INT, 5), col("Sana", DATE, 12), col("Reaktiv nomi", TEXT, 24), col("Seriya raqami", TEXT, 13),
-            col("Yaroqlilik muddati", DATE, 12), col("Turi", TEXT, 13), col("Kimga", TEXT, 18), col("Miqdor", QTY, 11),
+            col("Yaroqlilik muddati", DATE, 12), col("Turi", TEXT, 18), col("Kimga", TEXT, 18), col("Miqdor", QTY, 11),
             col("Qaytarilgan", QTY, 11), col("Birlik", TEXT, 7), col("Hujjat raqami", TEXT, 12),
             col("Tashkilot / qabul qiluvchi", TEXT, 20), col("Izoh", TEXT, 20),
         )
-        val out = list.mapIndexed { index, it ->
-            val unit = it.enteredUnit
-            ReportRow(
+        class Line(val date: LocalDate, val order: Int, val id: Long, val cells: (Long) -> List<Any?>)
+        val lines = list.map { item ->
+            val unit = item.enteredUnit
+            Line(item.issuedOn, 0, item.id) { n ->
                 listOf(
-                    (index + 1).toLong(), it.issuedOn, it.name, it.series, it.expiresOn, it.recipientType.label, it.recipientName,
-                    qty(it.qty, unit), qty(it.returnedQty, unit), unit.code, it.docNo,
-                    listOf(it.organization, it.receiver).filter { s -> s.isNotEmpty() }.joinToString(", "), it.note,
-                ),
-            )
+                    n, item.issuedOn, item.name, item.series, item.expiresOn, item.recipientType.label, item.recipientName,
+                    qty(item.qty, unit), qty(item.returnedQty, unit), unit.code, item.docNo,
+                    listOf(item.organization, item.receiver).filter { s -> s.isNotEmpty() }.joinToString(", "), item.note,
+                )
+            }
+        } + back.map { r ->
+            val unit = r.enteredUnit
+            Line(r.returnedOn, 1, r.id) { n ->
+                listOf(
+                    n, r.returnedOn, r.name, r.series, r.expiresOn, "Qaytarish", r.recipientName, null, qty(r.qty, unit), unit.code,
+                    r.docNo, listOf(r.organization, r.receivedBy).filter { s -> s.isNotEmpty() }.joinToString(", "),
+                    "${r.issuedOn.display()} dagi berishdan" + if (r.reason.isNotEmpty()) ". Sabab: ${r.reason}" else "",
+                )
+            }
         }
+        val out = lines.sortedWith(compareBy({ it.date }, { it.order }, { it.id })).mapIndexed { index, line -> ReportRow(line.cells((index + 1).toLong())) }
         fun count(type: RecipientType) = list.count { it.recipientType == type }
         val footer = listOf(
             "Jami: ${list.size} ta qator — bo‘limlarga ${count(RecipientType.DEPARTMENT)}, tumanlarga ${count(RecipientType.DISTRICT)}, " +
-                "hisobdan chiqarilgan ${count(RecipientType.WRITE_OFF)}",
-            "Jami sarf (qaytarilgani ayirilgan): " + totalsText(list.map { it.unit to it.netQty }),
+                "hisobdan chiqarilgan ${count(RecipientType.WRITE_OFF)}" +
+                (if (back.isNotEmpty()) "; oldingi berishlardan qaytarish: ${back.size} ta" else ""),
+            "Jami sarf (qaytarilgani ayirilgan): " + totalsText(list.map { it.unit to it.netQty } + back.map { it.unit to -it.qty }),
         )
         return Body(columns, out, footer)
     }
@@ -487,18 +590,19 @@ class ReportBuilder(private val services: Services) {
 
     private fun belowMin(ctx: Context): Body {
         val totals = services.queries.stockTotals(BatchFilter(), ctx.today).filter { it.belowMin && ctx.nameOk(it.name) }
+        // Minimum muddati o‘tmagan («yaroqli») qoldiq bilan solishtiriladi: «Yetishmaydi» = minimal − yaroqli qoldiq.
         val columns = listOf(
             col("№", INT, 5), col("Reaktiv nomi", TEXT, 28), col("Formula", TEXT, 12), col("Umumiy qoldiq", QTY, 12),
-            col("Minimal qoldiq", QTY, 12), col("Yetishmaydi", QTY, 12), col("Birlik", TEXT, 7),
+            col("Yaroqli qoldiq", QTY, 12), col("Minimal qoldiq", QTY, 12), col("Yetishmaydi", QTY, 12), col("Birlik", TEXT, 7),
             col("Partiyalar", INT, 9), col("Eng yaqin muddat", DATE, 12), col("Holati", STATUS, 17),
         )
         val out = totals.mapIndexed { index, t ->
             val min = minStockBase(t)
             ReportRow(
                 listOf(
-                    (index + 1).toLong(), t.name, t.formula, qty(t.remainder, t.unit), min?.let { qty(it, t.unit) },
-                    min?.let { qty((it - t.remainder).coerceAtLeast(0), t.unit) }, t.unit.code, t.batches.toLong(),
-                    t.nearestExpiry, t.worstState,
+                    (index + 1).toLong(), t.name, t.formula, qty(t.remainder, t.unit), qty(t.usableRemainder, t.unit),
+                    min?.let { qty(it, t.unit) }, min?.let { qty((it - t.usableRemainder).coerceAtLeast(0), t.unit) }, t.unit.code,
+                    t.batches.toLong(), t.nearestExpiry, t.worstState,
                 ),
                 state = t.worstState,
             )

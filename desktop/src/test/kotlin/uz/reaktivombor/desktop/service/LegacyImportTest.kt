@@ -260,4 +260,33 @@ class LegacyImportTest : ServiceTestBase() {
         assertTrue(result.notes.toString(), result.notes.any { it.contains("«Kelgan miqdor» qiymati («abc») son emas") })
         assertTrue(result.notes.none { it.contains("(«-5») son emas") })
     }
+
+    @Test
+    fun aCappedIssuedAmountIsKeptAndEveryNoteIsStoredPermanently() {
+        val rows = listOf(
+            // Omborda 20 g, berilgan 25 g (bo‘lim bilan) — 20 g gacha kamaytiriladi, asl «25» partiya izohida qoladi.
+            SheetRow(1, "Kumush nitrat", "", "20", "g", "01.01.2027", "20", "Biologiya", "25", createdAt = 10),
+            SheetRow(2, "Fenol", "", "1", "l", "", "1", createdAt = 20), // muddatsiz
+            SheetRow(3, "Aseton", "", "1", "l", "", "1", createdAt = 30), // muddatsiz
+            SheetRow(4, "Metanol", "", "1", "l", "", "1", createdAt = 40), // muddatsiz
+            SheetRow(5, "", "", "5", "l", "01.01.2027", "5", createdAt = 50), // nomsiz
+        )
+        assertTrue(services.legacy.lastNotes().isEmpty())
+        val result = services.legacy.importFile(writeJson("reaktivlar-jadval.json", SheetStore.toJson(rows, "2026-10-20T10:00:00")))
+        assertEquals(4, result.imported)
+        val cap = result.notes.single { it.contains("ombordagidan ko‘p") }
+        assertTrue(cap, cap.contains("(25 g)") && cap.contains("20 g gacha kamaytirildi"))
+        val kumush = services.queries.batchRows(today = today).single { it.name == "Kumush nitrat" }
+        assertTrue(kumush.note, kumush.note.contains("«Berilgan miqdor» «25»"))
+        assertEquals(G.factor * 20, kumush.issuedQty)
+        assertEquals(0L, kumush.remainder)
+
+        // Hamma izohlar (3 tadan ko‘p) — app_settings va audit jurnalida, natija xabari yopilgandan keyin ham.
+        assertTrue(result.notes.size > 3)
+        assertEquals(result.notes, services.legacy.lastNotes())
+        assertEquals(result.notes.joinToString("\n"), services.settings.get(Settings.LEGACY_IMPORT_NOTES))
+        val summary = services.queries.auditLogs(AuditFilter(action = AuditAction.LEGACY_IMPORTED)).single { it.entity == "legacy" }
+        assertTrue(summary.details, summary.details.contains("Izohlar (${result.notes.size} ta)"))
+        result.notes.forEach { assertTrue(it, summary.details.contains(it)) }
+    }
 }

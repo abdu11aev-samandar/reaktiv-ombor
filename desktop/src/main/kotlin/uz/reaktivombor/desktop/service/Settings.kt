@@ -17,6 +17,9 @@ class Settings(private val db: Database, private val audit: Audit) {
         const val LAST_AUTO_BACKUP = "last_auto_backup"
         const val LEGACY_IMPORT = "legacy_import"
         const val LEGACY_IMPORT_HASHES = "legacy_import_hashes"
+
+        /** Oxirgi eski ma’lumotlar ko‘chirishining barcha izohlari (qatorma-qator). */
+        const val LEGACY_IMPORT_NOTES = "legacy_import_notes"
         private const val TABLE_LAYOUT_PREFIX = "table_layout."
 
         const val DEFAULT_AUTO_BACKUP_KEEP = 14

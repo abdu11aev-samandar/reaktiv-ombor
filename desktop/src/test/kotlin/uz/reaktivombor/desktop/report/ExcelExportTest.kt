@@ -44,7 +44,8 @@ class ExcelExportTest : ReportTestBase() {
         val header = rows.first { it.texts() == data.columns.map { c -> c.title } }
         assertEquals(6, header.rowNum) // sarlavha, tashkilot, vaqt, filtr, bo‘sh qator, jadval sarlavhasi
         assertEquals("Bo‘lim / saqlash joyi", header.getCellText(3))
-        assertEquals("Mas’ul xodim", header.getCellText(14))
+        assertEquals("Hisobdan chiqarilgan", header.getCellText(11))
+        assertEquals("Mas’ul xodim", header.getCellText(15))
 
         val aseton = rows.first { it.getCellText(1) == "Aseton" }
         // Haqiqiy sana katagi, dd.mm.yyyy ko‘rinishida.
@@ -53,19 +54,20 @@ class ExcelExportTest : ReportTestBase() {
         assertEquals(LocalDateTime.of(2026, 10, 19, 0, 0), received.asDate())
         assertEquals("dd.mm.yyyy", received.dataFormatString)
         // Son katagi (miqdor) va butun son (qolgan kunlar).
-        val remainder = aseton.getCell(11)
+        val remainder = aseton.getCell(12)
         assertEquals(CellType.NUMBER, remainder.type)
         assertEquals(0, BigDecimal("2").compareTo(remainder.asNumber()))
         assertEquals("#,##0", remainder.dataFormatString)
         assertEquals(0, BigDecimal("10").compareTo(aseton.getCell(7).asNumber()))
         assertEquals("1 oy yoki kam qoldi", aseton.getCellText(8))
         val natriy = rows.first { it.getCellText(1) == "Natriy xlorid" }
-        assertEquals(0, BigDecimal("0.75").compareTo(natriy.getCell(11).asNumber()))
-        assertEquals("#,##0.00", natriy.getCell(11).dataFormatString)
-        assertEquals("kg", natriy.getCellText(12))
+        assertEquals(0, BigDecimal("0.75").compareTo(natriy.getCell(12).asNumber()))
+        assertEquals("#,##0.00", natriy.getCell(12).dataFormatString)
+        assertEquals("kg", natriy.getCellText(13))
         val xloroform = rows.first { it.getCellText(1) == "Xloroform" }
         assertEquals("Muddati o‘tgan", xloroform.getCellText(8))
-        assertEquals(0, BigDecimal("400").compareTo(xloroform.getCell(11).asNumber()))
+        assertEquals(0, BigDecimal("400").compareTo(xloroform.getCell(12).asNumber()))
+        assertEquals(0, BigDecimal("100").compareTo(xloroform.getCell(11).asNumber())) // hisobdan chiqarilgan
         // Jadvaldan keyin — jami qatorlari.
         assertTrue(rows.any { it.getCellText(0) == "Jami qoldiq: 16,4 l · 750 g" })
     }
@@ -94,6 +96,36 @@ class ExcelExportTest : ReportTestBase() {
         assertTrue(styles, styles.contains("\"7A1212\"")) // «Muddati o‘tgan» katagi
         assertTrue(styles, styles.contains("\"F4D3D3\"")) // qatorning och tusi
         assertTrue(styles, styles.contains("dd.mm.yyyy"))
+    }
+
+    @Test
+    fun textCellsWrapInsideTheirColumn() {
+        seed()
+        val (data, file) = export(ReportKind.DISTRICTS)
+        val entries = LinkedHashMap<String, ByteArray>()
+        ZipInputStream(Files.newInputStream(file)).use { zip ->
+            while (true) {
+                val entry = zip.nextEntry ?: break
+                entries[entry.name] = zip.readBytes()
+            }
+        }
+        fun parse(name: String) = javax.xml.parsers.DocumentBuilderFactory.newInstance().newDocumentBuilder()
+            .parse(java.io.ByteArrayInputStream(entries.getValue(name)))
+        val cells = parse("xl/worksheets/sheet1.xml").getElementsByTagName("c")
+        fun styleOf(ref: String): Int = (0 until cells.length).map { cells.item(it) as org.w3c.dom.Element }
+            .single { it.getAttribute("r") == ref }.getAttribute("s").toInt()
+        val xfs = (parse("xl/styles.xml").getElementsByTagName("cellXfs").item(0) as org.w3c.dom.Element).getElementsByTagName("xf")
+        fun wraps(style: Int): Boolean {
+            val alignment = (xfs.item(style) as org.w3c.dom.Element).getElementsByTagName("alignment")
+            return alignment.length > 0 && (alignment.item(0) as org.w3c.dom.Element).getAttribute("wrapText").let { it == "1" || it == "true" }
+        }
+        // 1 — sarlavha, 2 — vaqt, 3 — filtr, 4 — bo‘sh, 5 — jadval sarlavhasi, 6 — birinchi qator.
+        val organization = 'A' + data.columns.indexOfFirst { it.title == "Tashkilot" }
+        val name = 'A' + data.columns.indexOfFirst { it.title == "Reaktiv nomi" }
+        val qty = 'A' + data.columns.indexOfFirst { it.title == "Berilgan" }
+        assertTrue(wraps(styleOf("${organization}6")))
+        assertTrue(wraps(styleOf("${name}6")))
+        assertTrue(!wraps(styleOf("${qty}6"))) // son kataklari bitta qatorda
     }
 
     @Test

@@ -11,6 +11,7 @@ import uz.reaktivombor.desktop.core.DuplicateOperationError
 import uz.reaktivombor.desktop.core.ExpiredBatchError
 import uz.reaktivombor.desktop.core.InsufficientStockError
 import uz.reaktivombor.desktop.core.UserError
+import uz.reaktivombor.desktop.db.update
 import java.util.Collections
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
@@ -588,5 +589,76 @@ class StockServiceTest : ServiceTestBase() {
         val extra = services.stock.addReceipt(batch, ReceiptInput(today.minusDays(3), "1", L))
         services.stock.correctReceipt(extra, ReceiptInput(today.minusDays(2), "1", L), "Sana xato")
         assertEquals(today.minusDays(27), services.reagents.batch(batch)!!.receivedOn)
+    }
+
+    @Test
+    fun anExtraReceiptCannotBeDatedBeforeTheBatchArrived() {
+        val batch = newBatch("Aseton", "A-1", today.plusDays(300), "1", received = java.time.LocalDate.of(2026, 1, 1))
+        // Yil xato yozilgan (2025): partiya hali kelmagan edi — rad etiladi, hech narsa saqlanmaydi.
+        val error = assertThrows(UserError::class.java) {
+            services.stock.addReceipt(batch, ReceiptInput(java.time.LocalDate.of(2025, 2, 1), "2", L))
+        }
+        assertEquals(
+            "Kirim sanasi (01.02.2025) partiya kelgan sanadan (01.01.2026) oldin bo‘lishi mumkin emas.",
+            error.fields.getValue("date"),
+        )
+        assertEquals(1, services.queries.receipts().size)
+        assertEquals(0L, services.stock.available(batch, java.time.LocalDate.of(2025, 3, 1)))
+        // Kelgan kuni va undan keyin — mumkin.
+        val sameDay = services.stock.addReceipt(batch, ReceiptInput(java.time.LocalDate.of(2026, 1, 1), "500", ML))
+        // Tuzatishda ham o‘sha qoida (qo‘shimcha kirim kelgan sanadan oldinga surilmaydi).
+        val correction = assertThrows(UserError::class.java) {
+            services.stock.correctReceipt(sameDay, ReceiptInput(java.time.LocalDate.of(2025, 12, 31), "500", ML), "Sana xato")
+        }
+        assertTrue(correction.fields.containsKey("date"))
+        assertEquals(litres("1,5"), services.stock.remainder(batch))
+
+        // Eski ma’lumot: kelgan sana yo‘q — chegara ishlab chiqarilgan sana.
+        val old = newBatch("Fenol", "F-1", today.plusDays(300), "1", received = today.minusDays(10), produced = today.minusDays(100))
+        db.write { it.update("UPDATE batches SET received_on = NULL WHERE id = ?", old) }
+        val beforeProduced = assertThrows(UserError::class.java) {
+            services.stock.addReceipt(old, ReceiptInput(today.minusDays(101), "1", L))
+        }
+        assertTrue(beforeProduced.fields.getValue("date"), beforeProduced.fields.getValue("date").contains("ishlab chiqarilgan sanadan"))
+        services.stock.addReceipt(old, ReceiptInput(today.minusDays(100), "1", L))
+    }
+
+    @Test
+    fun anInactiveDistrictTypedByNameIsRefusedAndStaysInactive() {
+        val batch = newBatch("Aseton", "A-1", today.plusDays(300), "2")
+        val yashnobod = services.directory.addDistrict("Yashnobod")
+        services.stock.issue(
+            IssueInput(today, lines = listOf(IssueLine(batch, "100", ML, RecipientType.DISTRICT, districtName = "Yashnobod"))),
+        )
+        services.directory.setActive(PlaceKind.DISTRICT, yashnobod.id, false)
+        val error = assertThrows(UserError::class.java) {
+            services.stock.issue(
+                IssueInput(today, lines = listOf(IssueLine(batch, "200", ML, RecipientType.DISTRICT, districtName = "yashnobod"))),
+            )
+        }
+        assertTrue(error.message, error.message.contains("«Yashnobod» tumani nofaol"))
+        assertEquals(setOf("districtName"), error.fields.keys)
+        assertFalse(services.directory.get(PlaceKind.DISTRICT, yashnobod.id)!!.active)
+        assertEquals(1, services.queries.issueItems().size)
+        // Tuzatishda ham — nofaol tumanga yangi qator yozilmaydi (eski qator bekor qilinmay qoladi).
+        val item = services.queries.issueItems().single()
+        val correction = assertThrows(UserError::class.java) {
+            services.stock.correctIssueItem(
+                item.id, IssueLine(batch, "150", ML, RecipientType.DISTRICT, districtName = "Yashnobod"), today, "Miqdor xato",
+            )
+        }
+        assertEquals(setOf("districtName"), correction.fields.keys)
+        assertFalse(services.queries.issueItems().single().cancelled)
+        assertFalse(services.directory.get(PlaceKind.DISTRICT, yashnobod.id)!!.active)
+        // Yangi nom — yangi tuman (faol) yaratiladi; faollashtirilgandan keyin — eski tumanga ham beriladi.
+        services.stock.issue(
+            IssueInput(today, lines = listOf(IssueLine(batch, "50", ML, RecipientType.DISTRICT, districtName = "Bektemir"))),
+        )
+        assertTrue(services.directory.districts().any { it.name == "Bektemir" })
+        services.directory.setActive(PlaceKind.DISTRICT, yashnobod.id, true)
+        services.stock.issue(
+            IssueInput(today, lines = listOf(IssueLine(batch, "200", ML, RecipientType.DISTRICT, districtName = "yashnobod"))),
+        )
+        assertEquals(ml("1650"), services.stock.remainder(batch))
     }
 }

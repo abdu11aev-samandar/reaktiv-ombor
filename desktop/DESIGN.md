@@ -333,8 +333,9 @@ Everything above holds; this section pins down the details the core wave had to 
   ≥ 0 on D and on every later date (`Stock.available(batchId, date)`; for today it equals the remainder). A backdated
   issue therefore cannot make an earlier ledger balance negative.
 - **Directory**: `PlaceKind { DEPARTMENT, DISTRICT }`, `list(kind, includeInactive)`, `get(kind, id)`, `add(kind, name)`.
-  Names are stored as typed (cleaned), not re-capitalised. Inactive departments/districts are refused in new issue lines;
-  new names get `sort_order = max + 1`. Seeds: Gistologiya, Biologiya, Sud-kimyo, Morfologiya.
+  Names are stored as typed (cleaned), not re-capitalised. Inactive departments/districts are refused in new issue lines
+  and in issue corrections — a district typed by NAME is never silently reactivated (`findOrCreate(reactivate = false)`;
+  error ««X» tumani nofaol …» under field `districtName`, `districtId` for the id path); new names get `sort_order = max + 1`. Seeds: Gistologiya, Biologiya, Sud-kimyo, Morfologiya.
 - **Reagents**: data classes `Reagent`, `Batch`, `NewBatch`, `ReagentEdit`, `BatchEdit` (all nullable dates/units so
   "missing" is a validation message); also `get(id)`, `batch(id)`, `list(includeArchived)`, `batchesOf(reagentId)`.
   `createBatch` un-archives an archived reagent of the same name. Archived batch / reagent: no receipts, no issues.
@@ -343,16 +344,31 @@ Everything above holds; this section pins down the details the core wave had to 
   field error when the as-of check fails (earlier-dated stock would go negative). **Minimum stock** whose unit dimension
   matches none of the reagent's batches (incl. the new one in `createBatch`) → `minStockText` field error; an unchanged,
   already mismatched minimum does not block `updateReagent`.
-  **Delete rule ("no history")**: a batch can be deleted only when its only operation is its own initial receipt
-  (no other receipt, issue, return, adjustment or cancellation) — i.e. a just-entered mistake such as a wrong unit;
-  its initial receipt + movement are removed with it (via `ledger_unlock`) and a DELETED audit row keeps the details.
-  A reagent can be deleted only when it has no batches. Everything else → "… tarixi bor — o‘chirib bo‘lmaydi, arxivlang."
+  **Delete rule ("no history")**: a batch can be deleted only when it was entered TODAY (`batches.created_at` date ==
+  today) and its only operation is its own initial receipt (no other receipt, issue, return, adjustment or cancellation) —
+  i.e. a just-entered mistake such as a wrong unit; its initial receipt + movement are removed with it (via
+  `ledger_unlock`) and a DELETED audit row keeps the details. An older batch's receipt is already in reports → refused
+  («… kirim tarixi hisobotlarda bor — o‘chirib bo‘lmaydi …»; cancel the receipt with a reason, then archive).
+  `deleteBatchRefusal(id): String?` gives the same reason without deleting (null = deletable); every refusal text contains
+  «tarixi» (the UI offers archiving on it). When the deleted batch was the reagent's last one, the reagent row is deleted
+  in the same transaction (second DELETED audit row «… o‘chirildi (partiyasi qolmadi)»), so a typo name leaves no
+  suggestion behind. A reagent can be deleted only when it has no batches. Everything else → "… tarixi bor — o‘chirib
+  bo‘lmaydi, arxivlang." (+ «Arxivlash uchun avval qoldiqni (…) «Hisobdan chiqarish» bilan chiqaring.» when it has stock).
+  **Archive rule**: `archiveBatch` is refused while the batch remainder > 0, `archiveReagent` while any of its batches has
+  stock (message names the batches and says to write off via «Hisobdan chiqarish» first) — archived stock would silently
+  leave every total, the minimum check and expiry monitoring. Unarchive is always allowed.
+  **Edit audit**: BATCH_UPDATED / REAGENT_UPDATED record every changed field as old → new (department names, storage,
+  responsible, manufacturer, note — `«…»`, empty `«—»`, cut at `Reagents.AUDIT_TEXT_MAX` = 80 chars + «…» —, min stock
+  «20 g → 30 g» / «yo‘q»), also when `createBatch` changes an existing reagent's minimum. `updateBatch` refuses a
+  `receivedOn` later than the earliest active extra (non-initial) receipt (`receivedOn` field error).
 - **Stock**: `RecipientType(label)`; `IssueConfirm.none`; `IssueLine(batchId, qtyText, unit, recipientType,
   departmentId?, districtId?, districtName?, organization?, receiver?, note?)` — for WRITE_OFF `note` is the (required)
   reason; `writeOff(batchId, date, qtyText, unit, reason, confirm = IssueConfirm.none)`;
   `correctIssueItem(id, line, date, reason, confirm = IssueConfirm.none): Long` (new item id, new header with the old
   doc/issuer/note); `correctReceipt(...)` returns the new receipt id; cancels return Unit; `available(batchId, date)`.
   Expired = `expires_on < issue date`; write-offs never need the expired confirmation and never set `fefo_override`.
+  An extra (non-initial) receipt — new or a correction — dated before the batch's `received_on` (legacy rows without it:
+  `produced_on`) is refused (`date` field error); only the initial receipt defines `received_on`.
   FEFO override ignores stock that the same operation already takes from the earlier batch. `fefoOrder` returns only
   non-archived batches with stock: non-expired by expiry, then no-expiry (old data), then expired. Duplicate guard
   (120 s, non-cancelled rows): issue line = batch + base qty + recipient + date; receipt = batch + base qty + date;
@@ -372,6 +388,18 @@ Everything above holds; this section pins down the details the core wave had to 
   `Map<Dimension, Long>`, never summed), `Notification(kind, text, target: NotificationTarget{EXPIRY, STOCK}, reagentId,
   batchId?, daysLeft?, counted)`, `notificationCount(today)` (bell = expired + red + below-min), `LedgerRow`,
   `MovementKind(label)`. `reagentTypes` = reagents with at least one non-archived batch.
+  **Wave-4 additions** (all defaulted, appended at the end): `BatchRow.returnedQty` (returns of its department/district
+  issues; gross issued = `issuedQty + returnedQty`) and `BatchRow.groupUsable` (group remainder of NON-EXPIRED,
+  non-archived batches); `StockTotal.returned`, `StockTotal.usableRemainder`. **Below-minimum** = `groupUsable < min`
+  (expired stock never satisfies the minimum); the BELOW_MIN notification then reads ««X»: yaroqli qoldiq 0 g (muddati
+  o‘tgan 50 g) — minimal 20 g dan kam» (old «umumiy qoldiq …» text when nothing is expired). `ReceiptRow.producedOn`.
+  `OpFilter.returnsUntil` — `IssueItemRow.returnedQty`/`netQty` count only returns up to that date (period reports pass
+  the period end); `IssueItemRow.returnedTotal` / `returnableQty` are always all-time (use them in return dialogs).
+  `ReturnRow.expiresOn / docNo / organization` (of the returned issue). Dashboard `recentReceipts/recentIssues` are ordered
+  by operation date desc, then id desc. **Period summaries** (`departmentSummary`, `districtSummary`, `PlacesQueries`)
+  follow MOVEMENT: issued = issues dated in the period; returned = returns dated in the period — in-period issues' returns
+  up to `to` plus returns of EARLIER issues made inside the period (`DepartmentSummary/DistrictSummary.earlierReturns`;
+  a reagent/district with only such returns appears with `items = 0` and a negative net). No period → all-time.
   `fullLedger(): List<LedgerRow>` — every batch's movements (date, id order) with per-batch running balance (reports).
   Running balance: a reversed movement and its REVERSAL stay listed but do not change the balance (both show the
   previous balance), so a correction to an earlier date never shows a negative line; day-end balances are unchanged.
@@ -400,7 +428,10 @@ Everything above holds; this section pins down the details the core wave had to 
   a fast path; `legacy_import` = last import info. Importing `reaktivlar-jadval(.bak).json` while a sibling
   `reaktivlar.json` is newer adds a note (also in the LEGACY_IMPORTED audit) that ≤1.0.5 changes are in that file.
   Old rows: missing expiry stays NULL (UNKNOWN), an issued amount without a department becomes an ADJUSTMENT, issued >
-  stock is capped; all legacy operations are dated with the row's receipt date. «Kelgan vaqt» / produced date outside
+  stock is capped (the original issued text is kept in the batch note: «Berilgan miqdor» «25»); all legacy operations
+  are dated with the row's receipt date. ALL notes of the last import are stored in `app_settings.legacy_import_notes`
+  (one per line) and appended to the LEGACY_IMPORTED summary audit row («Izohlar (N ta): …»); `LegacyImport.lastNotes():
+  List<String>` reads them back (empty before any import). «Kelgan vaqt» / produced date outside
   01.01.1990…today are dropped like `createdOn` (note + original text in the batch note). An empty/unknown unit is taken
   from another row of the same name in the file when unambiguous; otherwise the row is skipped and its raw values are
   written to an audit row (LEGACY_IMPORTED, entity `legacy_row`). Unparseable dates / department text / amounts get a note
@@ -714,7 +745,8 @@ data class ReportColumn(title: String, type: ReportColumnType = TEXT, width: Int
 data class ReportRow(cells: List<Any?>, state: ExpiryState? = null, summary: Boolean = false) // state → row tint; summary → bold grey
 data class ReportData(kind, title, orgName, generatedAt: LocalDateTime, filterLines: List<String>, columns, rows,
                       footerLines: List<String>) { fun text(row, column): String; val generatedLine /* "Yaratilgan: dd.MM.yyyy HH:mm" */ }
-class ReportBuilder(services: Services) { fun build(kind, filter = ReportFilter(), today = services.today()): ReportData }
+class ReportBuilder(services: Services) { fun build(kind, filter = ReportFilter(), today = services.today()): ReportData
+    fun buildBatches(rows: List<BatchRow>, filterLines: List<String>, today = services.today()): ReportData } // BATCHES layout of exactly these rows
 object ReportFormat { cell(type, value), decimal(BigDecimal) /* "1 250,5" */, dateTime(LocalDateTime) }
 object ReportColors { NAVY …; tint(state) /* row */; fill(state) /* status cell */; onFill(state) }
 object ReportFiles { suggestedFileName(data, "xlsx") /* "Muddati o‘tgan reaktivlar 2026-10-29.xlsx" */; writeAtomically(path) { out -> } }
@@ -732,22 +764,22 @@ this order: "<periodLabel>: 01.10.2026 — 31.10.2026" (or "… dan" / "… gach
 
 | kind | period applies to (`periodLabel`) | rows |
 |---|---|---|
-| ALL_REAGENTS | received date («Kelgan sana») | every non-archived batch, ReagentsPage column order; group total as text "14 l" |
+| ALL_REAGENTS | received date («Kelgan sana») | every non-archived batch, ReagentsPage column order + «Hisobdan chiqarilgan» between «Jami berilgan miqdor» and «Joriy qoldiq» (kelgan − berilgan − chiqarilgan = qoldiq); group total as text "14 l" |
 | BATCHES | received date | batches per reagent+dimension + a `summary` row "Jami: <name> (N ta partiya)" in the group's largest unit |
 | GROUP_TOTALS | — (current state) | per reagent+dimension: batches, with stock, received, issued, written off, remainder, min stock, nearest expiry, worst state |
-| BY_DEPARTMENT | issued-to items («Davr») | per department × reagent+dimension: owned batches' remainder + issued to it (issued/returned/net) |
-| DISTRICTS | issue date | every district issue (entered unit): issued, returned, net, doc, organisation, receiver; per-district footer |
+| BY_DEPARTMENT | issued-to items («Davr») | per department × reagent+dimension: owned batches' remainder + issued to it (issued/returned/net; returned = returns dated in the period, as MOVEMENT) |
+| DISTRICTS | issue date | every district issue (entered unit): issued, returned (up to the period end), net, doc, organisation, receiver; in-period returns of earlier issues as own rows (Berilgan empty, net negative); per-district footer + ONE grand-total line "Jami: N ta berish, sof …" |
 | RECEIPTS | receipt date | active receipts, type Boshlang‘ich / Qo‘shimcha / Tuzatilgan; department = batch's |
-| ISSUES | issue date | every active issue line incl. write-offs; department/district = recipient |
+| ISSUES | issue date | every active issue line incl. write-offs; department/district = recipient, both set = «bo‘lim YOKI tuman» (filter line "Bo‘lim: X yoki Tuman: Y"); returned up to the period end + «Qaytarish» rows for in-period returns of earlier issues |
 | EXPIRING | expiry date | RED + YELLOW batches with stock, by expiry |
 | EXPIRED | expiry date | EXPIRED batches with stock, «O‘tgan kunlar» |
-| BELOW_MIN | — | reagents below min stock: remainder, min, shortfall (in the group unit) |
+| BELOW_MIN | — | reagents below min stock (non-expired stock < min): remainder, «Yaroqli qoldiq», min, shortfall = min − yaroqli (in the group unit) |
 | MOVEMENT | ledger date («Davr») | per batch: opening at `from`, receipts, issued, returned, written off, [Moslash only if any], closing at `to`; uses `Queries.fullLedger()`; reversals count under their original operation with the original date |
 | HISTORY | ledger date | needs a name (`UserError` field `name` if blank/unknown/ambiguous; exact name key wins, a single partial match is accepted); every movement (incl. cancelled + reversal rows) with per-batch running balance, entry time, "Keyin bekor qilingan"; with `from`: one `summary` row "Davr boshidagi qoldiq" per batch |
 
 Excel (`ExcelExport`, fastexcel through `core/Xlsx`): row 1 title (bold 14, navy), organisation (if set), "Yaratilgan: …",
 filter lines, blank row, header row (bold white on navy #0B2545, wrapped, thin borders, height from the longest title),
-data rows (thin borders; DATE = real date cell `dd.mm.yyyy`; QTY = number with exact decimals `#,##0` / `#,##0.0…`; INT
+data rows (thin borders; TEXT cells wrap inside their column (rows grow, nothing is cut); DATE = real date cell `dd.mm.yyyy`; QTY = number with exact decimals `#,##0` / `#,##0.0…`; INT
 `#,##0`; STATUS = label on the saturated state colour, bold; whole row lightly tinted by `row.state`; `summary` rows bold
 grey), "Ma’lumot topilmadi." when empty, footer lines (bold). Column widths from the spec, header frozen, autofilter over
 header + data, A4 landscape, fit to one page wide, header row repeated, page footer "Reaktiv Control · Sahifa &P / &N".

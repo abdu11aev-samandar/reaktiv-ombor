@@ -14,6 +14,9 @@ import uz.reaktivombor.desktop.db.update
 
 class ReagentsServiceTest : ServiceTestBase() {
 
+    /** 2026-yil mart (kirim hisoboti davri). */
+    private val march = java.time.LocalDate.of(2026, 3, 1) to java.time.LocalDate.of(2026, 3, 31)
+
     @Test
     fun newReagentCreatesReagentBatchAndInitialReceipt() {
         val id = services.reagents.createBatch(
@@ -275,34 +278,162 @@ class ReagentsServiceTest : ServiceTestBase() {
         issueTo("Biologiya", used, "100", ML)
 
         val refused = assertThrows(UserError::class.java) { services.reagents.deleteBatch(used) }
-        assertEquals("Partiyaning operatsiyalar tarixi bor — o‘chirib bo‘lmaydi, arxivlang.", refused.message)
+        // Qoldig‘i bor partiya arxivlanmaydi — xabar avval hisobdan chiqarishni aytadi (yangi qoida, #2).
+        assertEquals(
+            "Partiyaning operatsiyalar tarixi bor — o‘chirib bo‘lmaydi, arxivlang. " +
+                "Arxivlash uchun avval qoldiqni (0,9 l) «Hisobdan chiqarish» bilan chiqaring.",
+            refused.message,
+        )
+        assertEquals(refused.message, services.reagents.deleteBatchRefusal(used))
         val etil = services.reagents.list().first { it.name == "Etil spirti" }
         val reagentRefused = assertThrows(UserError::class.java) { services.reagents.deleteReagent(etil.id) }
         assertTrue(reagentRefused.message.contains("o‘chirib bo‘lmaydi, arxivlang"))
 
-        // Faqat boshlang‘ich kirimi bor (xato kiritilgan) partiya o‘chadi; audit yozuvi qoladi.
+        // Faqat boshlang‘ich kirimi bor (bugun xato kiritilgan) partiya o‘chadi; audit yozuvi qoladi. Reaktivning oxirgi
+        // partiyasi edi — reaktiv ham o‘chadi (nom takliflarida qolib ketmaydi).
+        assertNull(services.reagents.deleteBatchRefusal(fresh))
+        val asetonId = row(fresh).reagentId
         services.reagents.deleteBatch(fresh)
         assertNull(services.reagents.batch(fresh))
-        val aseton = services.reagents.list().first { it.name == "Aseton" }
-        services.reagents.deleteReagent(aseton.id)
-        assertNull(services.reagents.get(aseton.id))
-        assertEquals(2, services.queries.auditLogs(AuditFilter(action = AuditAction.DELETED)).size)
+        assertNull(services.reagents.get(asetonId))
+        val deleted = services.queries.auditLogs(AuditFilter(action = AuditAction.DELETED))
+        assertEquals(listOf("batch", "reagent"), deleted.map { it.entity }.reversed())
+        assertTrue(deleted.first().details, deleted.first().details.contains("«Aseton» o‘chirildi (partiyasi qolmadi)"))
         assertEquals(litres("0,9"), services.stock.remainder(used))
+    }
+
+    @Test
+    fun aBatchEnteredOnAnEarlierDayIsNotDeletedEvenWithoutOtherOperations() {
+        val old = newBatch("Etil spirtti", "X-1", today.plusDays(100), "5", received = java.time.LocalDate.of(2026, 3, 1))
+        assertEquals(1, services.queries.receipts(OpFilter(from = march.first, to = march.second)).size)
+        // Ertasi kuni: kirim hisobotlarda bor — o‘chirilmaydi, xabarda «tarixi» (UI arxivlashni taklif qiladi).
+        clock.advanceSeconds(24 * 3600)
+        val refusal = services.reagents.deleteBatchRefusal(old)
+        assertTrue(refusal, refusal!!.contains("tarixi"))
+        assertTrue(refusal, refusal.contains("29.10.2026 da kiritilgan"))
+        assertTrue(refusal, refusal.contains("01.03.2026 da kelgan"))
+        val error = assertThrows(UserError::class.java) { services.reagents.deleteBatch(old) }
+        assertEquals(refusal, error.message)
+        assertEquals(1, services.queries.receipts(OpFilter(from = march.first, to = march.second)).size)
+        assertTrue(services.queries.auditLogs(AuditFilter(action = AuditAction.DELETED)).isEmpty())
+        // Tarix saqlanadigan yo‘l: kirimni sabab bilan bekor qilish, so‘ng arxivlash.
+        val receipt = services.queries.receipts(OpFilter(batchId = old)).single()
+        services.stock.cancelReceipt(receipt.id, "Xato kiritilgan")
+        services.reagents.archiveBatch(old)
+        assertTrue(row(old).archived)
+        assertEquals(1, services.queries.receipts(OpFilter(batchId = old, includeCancelled = true)).size)
+    }
+
+    @Test
+    fun deletingOneOfSeveralBatchesKeepsTheReagent() {
+        val keep = newBatch("Etil spirti", "E-1", today.plusDays(100), "1")
+        val typo = newBatch("Etil spirti", "E-2", today.plusDays(200), "1")
+        services.reagents.deleteBatch(typo)
+        assertEquals(row(keep).reagentId, services.reagents.list().single().id)
+        assertEquals(listOf("Etil spirti"), services.reagents.searchNames("etil"))
+        // Xato nom bilan kiritilgan yagona partiya o‘chirilsa — nom takliflarda qolmaydi.
+        val wrong = newBatch("Etil spirtti", "X-1", today.plusDays(100), "5")
+        assertEquals(listOf("Etil spirti", "Etil spirtti"), services.reagents.searchNames("etil"))
+        services.reagents.deleteBatch(wrong)
+        assertEquals(listOf("Etil spirti"), services.reagents.searchNames("etil"))
+        assertEquals(listOf("Etil spirti"), services.reagents.list(includeArchived = true).map { it.name })
     }
 
     @Test
     fun archivedBatchLeavesTheGroupTotalAndCannotBeUsed() {
         val a = newBatch("Aseton", "A-1", today.plusDays(100), "1")
         val b = newBatch("Aseton", "A-2", today.plusDays(200), "2")
+        // Qoldig‘i bor partiya arxivlanmaydi (aks holda qoldiq jamilar va minimal nazoratdan harakatsiz yo‘qolardi).
+        val refused = assertThrows(UserError::class.java) { services.reagents.archiveBatch(a) }
+        assertTrue(refused.message, refused.message.contains("1 l qoldiq bor"))
+        assertTrue(refused.message, refused.message.contains("«Hisobdan chiqarish»"))
+        assertFalse(row(a).archived)
+        assertEquals(litres("3"), row(b).groupTotal)
+        // Avval hisobdan chiqariladi (harakat yoziladi), keyin arxivlanadi.
+        services.stock.writeOff(a, today, "1", L, "Ifloslangan")
         services.reagents.archiveBatch(a)
         assertEquals(listOf(b), services.queries.batchRows(today = today).map { it.batchId })
         assertEquals(litres("2"), row(b).groupTotal)
         assertTrue(row(a).archived)
-        assertEquals(litres("1"), row(a).remainder) // qoldiq o‘chmaydi
+        assertEquals(0L, row(a).remainder)
+        assertEquals(litres("1"), row(a).writtenOffQty)
         val error = assertThrows(UserError::class.java) { issueTo("Biologiya", a, "100", ML) }
         assertTrue(error.message.contains("arxivda"))
         services.reagents.unarchiveBatch(a)
-        assertEquals(litres("3"), row(b).groupTotal)
+        assertFalse(row(a).archived)
+        assertEquals(litres("2"), row(b).groupTotal)
+    }
+
+    @Test
+    fun aReagentWithStockIsNotArchived() {
+        val a = newBatch("Aseton", "A-1", today.plusDays(100), "1")
+        val b = newBatch("Aseton", "A-2", today.plusDays(200), "250", unit = ML)
+        val reagent = row(a).reagentId
+        val refused = assertThrows(UserError::class.java) { services.reagents.archiveReagent(reagent) }
+        assertTrue(refused.message, refused.message.contains("2 ta partiyasida qoldiq bor (A-1 — 1 l, A-2 — 250 ml)"))
+        assertTrue(refused.message, refused.message.contains("«Hisobdan chiqarish»"))
+        assertFalse(services.reagents.get(reagent)!!.archived)
+        services.stock.writeOff(a, today, "1", L, "Muddati o‘tgan")
+        issueTo("Biologiya", b, "250", ML)
+        services.reagents.archiveReagent(reagent)
+        assertTrue(services.reagents.get(reagent)!!.archived)
+        assertTrue(services.queries.batchRows(today = today).isEmpty())
+    }
+
+    @Test
+    fun editAuditKeepsOldAndNewValues() {
+        val id = newBatch("Etil spirti", "ES-001", today.plusDays(100), "1", departmentId = deptId("Gistologiya"))
+        services.reagents.updateBatch(
+            id,
+            BatchEdit(
+                series = "ES-001", manufacturer = "Merck", receivedOn = today.minusDays(10), expiresOn = today.plusDays(100),
+                departmentId = deptId("Biologiya"), storageLocation = "Seyf 2", responsible = "Rahimov A.", note = "x".repeat(120),
+            ),
+        )
+        services.reagents.updateBatch(
+            id,
+            BatchEdit(
+                series = "ES-001", manufacturer = "Merck", receivedOn = today.minusDays(10), expiresOn = today.plusDays(100),
+                departmentId = null, storageLocation = "Seyf 2", responsible = "Karimova D.", note = "",
+            ),
+        )
+        val batchAudit = services.queries.auditLogs(AuditFilter(action = AuditAction.BATCH_UPDATED)).reversed().map { it.details }
+        val first = batchAudit[0]
+        listOf(
+            "ishlab chiqaruvchi: «—» → «Merck»", "bo‘lim: «Gistologiya» → «Biologiya»", "saqlash joyi: «—» → «Seyf 2»",
+            "mas’ul xodim: «—» → «Rahimov A.»", "izoh: «—» → «" + "x".repeat(Reagents.AUDIT_TEXT_MAX) + "…»",
+        ).forEach { assertTrue(first, first.contains(it)) }
+        val second = batchAudit[1]
+        listOf("bo‘lim: «Biologiya» → «—»", "mas’ul xodim: «Rahimov A.» → «Karimova D.»", "izoh: «" + "x".repeat(Reagents.AUDIT_TEXT_MAX) + "…» → «—»")
+            .forEach { assertTrue(second, second.contains(it)) }
+
+        val reagent = row(id).reagentId
+        services.reagents.updateReagent(reagent, ReagentEdit(name = "Etil spirti", minStockText = "20", minStockUnit = L, note = "Yonuvchan"))
+        services.reagents.updateReagent(reagent, ReagentEdit(name = "Etil spirti", minStockText = "30", minStockUnit = L, note = "Yonuvchan modda"))
+        val reagentAudit = services.queries.auditLogs(AuditFilter(action = AuditAction.REAGENT_UPDATED)).reversed().map { it.details }
+        assertTrue(reagentAudit[0], reagentAudit[0].contains("minimal qoldiq: yo‘q → 20 l"))
+        assertTrue(reagentAudit[0], reagentAudit[0].contains("izoh: «—» → «Yonuvchan»"))
+        assertTrue(reagentAudit[1], reagentAudit[1].contains("minimal qoldiq: 20 l → 30 l"))
+        assertTrue(reagentAudit[1], reagentAudit[1].contains("izoh: «Yonuvchan» → «Yonuvchan modda»"))
+        // Yangi partiya bilan minimum o‘zgarsa ham — eski → yangi.
+        newBatch("Etil spirti", "ES-002", today.plusDays(200), "1", minStock = "40", minStockUnit = L)
+        val viaBatch = services.queries.auditLogs(AuditFilter(action = AuditAction.REAGENT_UPDATED)).first().details
+        assertTrue(viaBatch, viaBatch.contains("minimal qoldiq: 30 l → 40 l"))
+    }
+
+    @Test
+    fun theReceivedDateCannotMoveAfterAnExtraReceipt() {
+        val id = newBatch("Aseton", "A-1", today.plusDays(100), "1", received = today.minusDays(20))
+        services.stock.addReceipt(id, ReceiptInput(today.minusDays(10), "500", ML))
+        val error = assertThrows(UserError::class.java) {
+            services.reagents.updateBatch(id, BatchEdit(series = "A-1", receivedOn = today.minusDays(5), expiresOn = today.plusDays(100)))
+        }
+        assertTrue(error.message, error.message.contains("qo‘shimcha kirim"))
+        assertTrue(error.fields.containsKey("receivedOn"))
+        assertEquals(today.minusDays(20), services.reagents.batch(id)!!.receivedOn)
+        // Qo‘shimcha kirim kunigacha surish mumkin.
+        services.reagents.updateBatch(id, BatchEdit(series = "A-1", receivedOn = today.minusDays(10), expiresOn = today.plusDays(100)))
+        assertEquals(today.minusDays(10), services.reagents.batch(id)!!.receivedOn)
     }
 
     @Test

@@ -7,7 +7,16 @@ import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import uz.reaktivombor.desktop.core.ExpiryState
+import uz.reaktivombor.desktop.core.MeasureUnit
+import uz.reaktivombor.desktop.core.Qty
 import uz.reaktivombor.desktop.core.UserError
+import uz.reaktivombor.desktop.service.BatchFilter
+import uz.reaktivombor.desktop.service.IssueInput
+import uz.reaktivombor.desktop.service.IssueLine
+import uz.reaktivombor.desktop.service.PlaceHistoryKind
+import uz.reaktivombor.desktop.service.PlacesQueries
+import uz.reaktivombor.desktop.service.RecipientType
+import uz.reaktivombor.desktop.service.ReturnInput
 import java.math.BigDecimal
 import java.time.LocalDate
 
@@ -117,6 +126,12 @@ class ReportsTest : ReportTestBase() {
         assertEquals("T-15", districts.cell(chilonzor, "Hujjat raqami"))
         assertEquals("Chilonzor SEB", districts.cell(chilonzor, "Tashkilot"))
         assertTrue(districts.footerLines.toString(), districts.footerLines.contains("Chilonzor: 1 ta berish, sof 150 g"))
+        // Umumiy jami — bitta qator (ikkiga bo‘linib qolmaydi).
+        assertEquals(
+            listOf("Chilonzor: 1 ta berish, sof 150 g", "Yunusobod: 1 ta berish, sof 100 g", "Jami: 2 ta berish, sof 250 g"),
+            districts.footerLines,
+        )
+        assertEquals(listOf("Ma’lumot topilmadi.", "Jami: 0 ta berish, sof 0"), build(ReportKind.DISTRICTS, ReportFilter(name = "Benzol")).footerLines)
 
         val issues = build(ReportKind.ISSUES)
         assertEquals("Jami sarf (qaytarilgani ayirilgan): 5,1 l · 250 g", issues.footerLines[1])
@@ -264,8 +279,165 @@ class ReportsTest : ReportTestBase() {
         val belowMin = build(ReportKind.BELOW_MIN)
         val aseton = belowMin.rows.single()
         assertEquals("Aseton", belowMin.cell(aseton, "Reaktiv nomi"))
-        assertEquals(listOf("2", "3", "1"), listOf("Umumiy qoldiq", "Minimal qoldiq", "Yetishmaydi").map { num(belowMin.cell(aseton, it)) })
+        assertEquals(listOf("2", "2", "3", "1"), listOf("Umumiy qoldiq", "Yaroqli qoldiq", "Minimal qoldiq", "Yetishmaydi").map { num(belowMin.cell(aseton, it)) })
         assertEquals("l", belowMin.cell(aseton, "Birlik"))
+    }
+
+    @Test
+    fun belowMinUsesNonExpiredStock() {
+        // Faqat muddati o‘tgan zaxira (50 g) minimal 20 g ni qoplamaydi: yaroqli qoldiq 0 — 20 g yetishmaydi.
+        newBatch("Kumush nitrat", "KN-09", today.minusDays(5), "50", unit = G, received = today.minusDays(200), minStock = "20", minStockUnit = G)
+        val data = build(ReportKind.BELOW_MIN)
+        val row = data.rows.single()
+        assertEquals(
+            listOf("50", "0", "20", "20"),
+            listOf("Umumiy qoldiq", "Yaroqli qoldiq", "Minimal qoldiq", "Yetishmaydi").map { num(data.cell(row, it)) },
+        )
+        assertEquals(ExpiryState.EXPIRED, data.cell(row, "Holati"))
+    }
+
+    @Test
+    fun allReagentsQuantitiesAddUp() {
+        seed()
+        val all = build(ReportKind.ALL_REAGENTS)
+        all.rows.forEach { row ->
+            val v = listOf("Kelgan miqdor", "Jami berilgan miqdor", "Hisobdan chiqarilgan", "Joriy qoldiq").map { all.cell(row, it) as BigDecimal }
+            assertEquals(all.cell(row, "Seriya raqami").toString(), 0, (v[0] - v[1] - v[2]).compareTo(v[3]))
+        }
+        val x = all.rowsOf("Xloroform").single()
+        assertEquals(listOf("500", "0", "100", "400"), listOf("Kelgan miqdor", "Jami berilgan miqdor", "Hisobdan chiqarilgan", "Joriy qoldiq").map { num(all.cell(x, it)) })
+        // Ustun «Jami berilgan miqdor» va «Joriy qoldiq» orasida.
+        assertEquals(all.column("Jami berilgan miqdor") + 1, all.column("Hisobdan chiqarilgan"))
+        assertEquals(all.column("Hisobdan chiqarilgan") + 1, all.column("Joriy qoldiq"))
+    }
+
+    @Test
+    fun issuesWithBothDepartmentAndDistrictMeanEither() {
+        seed()
+        val chilonzor = services.directory.districts().single { it.name == "Chilonzor" }
+        val data = build(ReportKind.ISSUES, ReportFilter(departmentId = deptId("Biologiya"), districtId = chilonzor.id))
+        assertEquals(listOf("Bo‘lim: Biologiya yoki Tuman: Chilonzor"), data.filterLines)
+        assertEquals(listOf("Biologiya", "Chilonzor"), data.rows.map { data.cell(it, "Kimga") })
+        // Bittasi tanlansa — avvalgidek.
+        assertEquals(listOf("Tuman: Chilonzor"), build(ReportKind.ISSUES, ReportFilter(districtId = chilonzor.id)).filterLines)
+        assertEquals(1, build(ReportKind.ISSUES, ReportFilter(districtId = chilonzor.id)).rows.size)
+    }
+
+    @Test
+    fun longTextColumnsAreWideEnough() {
+        assertEquals(26, build(ReportKind.DISTRICTS).columns.single { it.title == "Tashkilot" }.width)
+        assertEquals(18, build(ReportKind.ISSUES).columns.single { it.title == "Turi" }.width)
+    }
+
+    @Test
+    fun buildBatchesFormatsExactlyTheGivenRows() {
+        seed()
+        // Butun ro‘yxat — BATCHES hisoboti bilan bir xil.
+        val full = builder.buildBatches(services.queries.batchRows(today = today), emptyList(), today)
+        val report = build(ReportKind.BATCHES)
+        assertEquals(ReportKind.BATCHES, full.kind)
+        assertEquals(report.title, full.title)
+        assertEquals(report.columns, full.columns)
+        assertEquals(report.rows, full.rows)
+        assertEquals(report.footerLines, full.footerLines)
+        assertEquals(listOf("Filtr: yo‘q"), full.filterLines)
+        // Ekrandagi tanlov (seriya «ES» + faqat yaroqli) — aynan shu qatorlar va berilgan filtr qatorlari.
+        val shown = services.queries.batchRows(BatchFilter(series = "ES"), today).filter { it.state == ExpiryState.GREEN }
+        val data = builder.buildBatches(shown, listOf("Seriya: ES", "Holati: Yaroqli"), today)
+        assertEquals(listOf("Seriya: ES", "Holati: Yaroqli"), data.filterLines)
+        assertEquals(listOf("ES-003"), data.rows.filter { !it.summary }.map { data.cell(it, "Seriya raqami") })
+        assertEquals(listOf("Jami: Etil spirti (1 ta partiya)"), data.rows.filter { it.summary }.map { data.cell(it, "Reaktiv nomi") })
+        assertEquals("Jami: 1 ta reaktiv, 1 ta partiya", data.footerLines.first())
+        assertEquals("Yaratilgan: 29.10.2026 09:00", data.generatedLine)
+    }
+
+    @Test
+    fun periodReportsCountReturnsLikeTheMovementReport() {
+        // Aseton: 01.08 da 10 l keldi; 15.09 da Chilonzorga 2 l; 03.10 da 0,5 l qaytdi. Biologiyaga 20.08 da 1 l, 10.09 da 0,25 l qaytdi.
+        fun d(m: Int, day: Int) = LocalDate.of(2026, m, day)
+        val aseton = newBatch("Aseton", "A-1", d(12, 31).plusYears(1), "10", received = d(8, 1))
+        services.stock.issue(
+            IssueInput(
+                d(9, 15), docNo = "T-7",
+                lines = listOf(IssueLine(aseton, "2", L, RecipientType.DISTRICT, districtName = "Chilonzor")),
+            ),
+        )
+        issueTo("Biologiya", aseton, "1", L, date = d(8, 20))
+        val bio = services.queries.issueItems().single { it.recipientName == "Biologiya" }
+        services.stock.returnItem(bio.id, ReturnInput(d(9, 10), "250", ML))
+        val september = ReportFilter(from = d(9, 1), to = d(9, 30))
+        val october = ReportFilter(from = d(10, 1), to = d(10, 31))
+        val before = build(ReportKind.DISTRICTS, september)
+        val chilonzor = services.queries.issueItems().single { it.districtName == "Chilonzor" }
+        services.stock.returnItem(chilonzor.id, ReturnInput(d(10, 3), "0,5", L))
+
+        // Sentyabr hisoboti 03.10 dagi qaytarishdan keyin ham o‘zgarmaydi.
+        val sepDistricts = build(ReportKind.DISTRICTS, september)
+        assertEquals(before.rows, sepDistricts.rows)
+        assertEquals(before.footerLines, sepDistricts.footerLines)
+        val row = sepDistricts.rows.single()
+        assertEquals(listOf("2", "0", "2"), listOf("Berilgan", "Qaytarilgan", "Sof berilgan").map { num(sepDistricts.cell(row, it)) })
+        assertEquals("Jami: 1 ta berish, sof 2 l", sepDistricts.footerLines.last())
+
+        // Hisobot qatorlari o‘z birligida — asosiy birlikka o‘tkazib qo‘shiladi.
+        fun sum(data: ReportData, title: String): Long = data.rows.sumOf { r ->
+            (data.cell(r, title) as BigDecimal?)?.let { Qty.fromDecimal(it, MeasureUnit.of(data.cell(r, "Birlik") as String)!!) } ?: 0L
+        }
+        for ((filter, expected) in listOf(september to (litres("2") to ml("250")), october to (0L to ml("500")))) {
+            val movement = build(ReportKind.MOVEMENT, filter)
+            val issued = sum(movement, "Berilgan")
+            val returned = sum(movement, "Qaytarilgan")
+            assertEquals(expected, issued to returned)
+            val districts = build(ReportKind.DISTRICTS, filter)
+            val departments = build(ReportKind.BY_DEPARTMENT, filter)
+            // Tumanlar + bo‘limlar = davrdagi harakat (hisobdan chiqarish yo‘q).
+            assertEquals(issued, sum(districts, "Berilgan") + sum(departments, "Bo‘limga berilgan"))
+            assertEquals(returned, sum(districts, "Qaytarilgan") + sum(departments, "Qaytarilgan"))
+            val issues = build(ReportKind.ISSUES, filter)
+            assertEquals(issued, sum(issues, "Miqdor"))
+            assertEquals(returned, sum(issues, "Qaytarilgan"))
+        }
+
+        // Oktyabr: sentyabrdagi berishning qaytarishi — alohida qator (berilgan bo‘sh, sof manfiy).
+        val octDistricts = build(ReportKind.DISTRICTS, october)
+        val back = octDistricts.rows.single()
+        assertNull(octDistricts.cell(back, "Berilgan"))
+        assertEquals(listOf("0.5", "-0.5"), listOf("Qaytarilgan", "Sof berilgan").map { num(octDistricts.cell(back, it)) })
+        assertEquals(d(10, 3), octDistricts.cell(back, "Sana"))
+        assertEquals("T-7", octDistricts.cell(back, "Hujjat raqami"))
+        assertTrue(octDistricts.cell(back, "Tashkilot").toString(), octDistricts.cell(back, "Tashkilot").toString().contains("15.09.2026 dagi berishdan"))
+        assertEquals("Jami: 0 ta berish, oldingi berishlardan 1 ta qaytarish, sof -500 ml", octDistricts.footerLines.last())
+        val sepIssues = build(ReportKind.ISSUES, september)
+        val returnRow = sepIssues.rows.single { sepIssues.cell(it, "Turi") == "Qaytarish" }
+        assertEquals("Biologiya", sepIssues.cell(returnRow, "Kimga"))
+        assertEquals("Jami sarf (qaytarilgani ayirilgan): 1,75 l", sepIssues.footerLines.last())
+        val sepDept = build(ReportKind.BY_DEPARTMENT, september)
+        val bioRow = sepDept.rows.single()
+        assertEquals(listOf("0", "0.25", "-0.25"), listOf("Bo‘limga berilgan", "Qaytarilgan", "Sof berilgan").map { num(sepDept.cell(bioRow, it)) })
+
+        // Sahifalar jamlari ham shu qoida bilan.
+        val places = PlacesQueries(services)
+        val sepSummary = places.districtSummary(from = d(9, 1), to = d(9, 30))
+        assertEquals(litres("2"), sepSummary.districts.single().net.values.single())
+        assertEquals(0L, sepSummary.perReagent.single().total.returned)
+        assertEquals(0L, sepSummary.items.single().returnedQty)
+        assertEquals(litres("0,5"), sepSummary.items.single().returnedTotal) // qaytarish oynasi uchun — hammasi
+        val octSummary = places.districtSummary(from = d(10, 1), to = d(10, 31))
+        assertEquals(-litres("0,5"), octSummary.districts.single().net.values.single())
+        assertEquals(0, octSummary.districts.single().items)
+        assertEquals(litres("0,5"), octSummary.perReagent.single().total.returned)
+        assertEquals(1, octSummary.earlierReturns.size)
+        assertEquals(litres("1,5"), places.districtSummary().districts.single().net.values.single()) // davrsiz — hammasi
+        val bioId = deptId("Biologiya")
+        val sepBio = places.departmentSummary(bioId, from = d(9, 1), to = d(9, 30), today = today)
+        val total = sepBio.issuedTo.single()
+        assertEquals(0L, total.issued)
+        assertEquals(ml("250"), total.returned)
+        assertEquals(0, total.items)
+        assertEquals(
+            places.departmentHistory(bioId, from = d(9, 1), to = d(9, 30)).filter { it.kind == PlaceHistoryKind.RETURN }.sumOf { it.qty },
+            total.returned,
+        )
     }
 
     @Test

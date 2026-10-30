@@ -114,6 +114,9 @@ class Reagents(
     companion object {
         const val NAME_MAX = 255
         const val SERIES_MAX = 100
+
+        /** Audit yozuvidagi eski/yangi matn (izoh va h.k.) shu belgigacha qisqartiriladi. */
+        const val AUDIT_TEXT_MAX = 80
         private val log: Logger = Logger.getLogger("uz.reaktivombor.service.Reagents")
     }
 
@@ -290,7 +293,7 @@ class Reagents(
                 "UPDATE reagents SET min_stock = ?, min_stock_unit = ?, updated_at = ? WHERE id = ?",
                 minStock.first, minStock.second, now, existing.id,
             )
-            changes += "minimal qoldiq: ${Qty.formatWithUnit(minStock.first, minStock.second)}"
+            changes += "minimal qoldiq: ${minStockText(existing.minStock, existing.minStockUnit)} → ${minStockText(minStock.first, minStock.second)}"
         }
         if (changes.isNotEmpty()) {
             audit.log(conn, AuditAction.REAGENT_UPDATED, "reagent", existing.id, "«${existing.name}»: " + changes.joinToString("; "), reagentId = existing.id)
@@ -318,13 +321,14 @@ class Reagents(
             conn.queryOne("SELECT name FROM reagents WHERE name_key = ? AND id <> ?", key, id) { it.getString(1) }?.let { other ->
                 throw UserError("«$other» nomli reaktiv allaqachon bor — boshqa reaktiv nomiga o‘zgartirib bo‘lmaydi.", "name")
             }
+            // Audit: har bir o‘zgargan maydon eski → yangi qiymati bilan (eski qiymat boshqa joyda saqlanmaydi).
             val changes = buildList {
                 if (name != reagent.name) add("nomi: «${reagent.name}» → «$name»")
                 if (formula != reagent.formula) add("formula: «${reagent.formula}» → «$formula»")
                 if (minStock?.first != reagent.minStock || minStock?.second != reagent.minStockUnit) {
-                    add("minimal qoldiq: " + (minStock?.let { Qty.formatWithUnit(it.first, it.second) } ?: "yo‘q"))
+                    add("minimal qoldiq: ${minStockText(reagent.minStock, reagent.minStockUnit)} → ${minStockText(minStock?.first, minStock?.second)}")
                 }
-                if (note != reagent.note) add("izoh o‘zgardi")
+                if (note != reagent.note) add("izoh: ${auditText(reagent.note)} → ${auditText(note)}")
             }
             if (changes.isEmpty()) return@write
             // Yangi (o‘zgargan) minimal qoldiq reaktivning birorta partiyasiga ham qo‘llanmasa — xato. Avvaldan shunday saqlangan
@@ -388,6 +392,17 @@ class Reagents(
                         "receivedOn",
                     )
                 }
+                // Qo‘shimcha kirim partiya kelgan sanadan oldin bo‘lolmaydi (Stock.addReceipt qoidasining teskari tomoni).
+                val firstExtra = conn.queryOne(
+                    "SELECT MIN(received_on) FROM receipts WHERE batch_id = ? AND is_initial = 0 AND cancelled_at IS NULL",
+                    id,
+                ) { rs -> rs.getString(1)?.let(LocalDate::parse) }
+                if (firstExtra != null && receivedOn > firstExtra) {
+                    throw UserError(
+                        "Partiyaga ${firstExtra.display()} da qo‘shimcha kirim qilingan — kelgan sana undan keyin bo‘lishi mumkin emas.",
+                        "receivedOn",
+                    )
+                }
             }
             // Kelgan sana bitta: partiya kartochkasidagi sana o‘zgarsa — boshlang‘ich kirim ham shu kunga ko‘chiriladi.
             if (receivedOn != null && receivedOn != batch.receivedOn) {
@@ -414,16 +429,21 @@ class Reagents(
                     )
                 }
             }
+            fun department(departmentId: Long?): String =
+                departmentId?.let { directory.find(conn, PlaceKind.DEPARTMENT, it)?.name } ?: ""
+            // Audit: eski → yangi qiymatlar (partiya yozuvi joyida yangilanadi — eski qiymat faqat shu yerda qoladi).
             val changes = buildList {
                 if (series != batch.series) add("seriya: «${batch.series}» → «$series»")
-                if (manufacturer != batch.manufacturer) add("ishlab chiqaruvchi")
+                if (manufacturer != batch.manufacturer) add("ishlab chiqaruvchi: ${auditText(batch.manufacturer)} → ${auditText(manufacturer)}")
                 if (producedOn != batch.producedOn) add("ishlab chiqarilgan sana: ${batch.producedOn?.display() ?: "—"} → ${producedOn?.display() ?: "—"}")
                 if (receivedOn != batch.receivedOn) add("kelgan sana: ${batch.receivedOn?.display() ?: "—"} → ${receivedOn?.display() ?: "—"}")
                 if (expiresOn != batch.expiresOn) add("muddati: ${batch.expiresOn?.display() ?: "—"} → ${expiresOn?.display() ?: "—"}")
-                if (edit.departmentId != batch.departmentId) add("bo‘lim")
-                if (storage != batch.storageLocation) add("saqlash joyi")
-                if (responsible != batch.responsible) add("mas’ul xodim")
-                if (note != batch.note) add("izoh")
+                if (edit.departmentId != batch.departmentId) {
+                    add("bo‘lim: ${auditText(department(batch.departmentId))} → ${auditText(department(edit.departmentId))}")
+                }
+                if (storage != batch.storageLocation) add("saqlash joyi: ${auditText(batch.storageLocation)} → ${auditText(storage)}")
+                if (responsible != batch.responsible) add("mas’ul xodim: ${auditText(batch.responsible)} → ${auditText(responsible)}")
+                if (note != batch.note) add("izoh: ${auditText(batch.note)} → ${auditText(note)}")
             }
             if (changes.isEmpty()) return@write
             conn.update(
@@ -448,10 +468,28 @@ class Reagents(
 
     fun unarchiveBatch(id: Long) = setBatchArchived(id, false)
 
+    /**
+     * Qoldig‘i bor partiya (reaktivda — qoldig‘i bor birorta partiya) arxivlanmaydi: arxivdagi partiya jamilar, minimal
+     * qoldiq va muddat nazoratidan chiqadi, qoldiq esa harakatsiz «yo‘qolib» qolardi. Avval «Hisobdan chiqarish».
+     */
     private fun setReagentArchived(id: Long, archived: Boolean) {
         db.write { conn ->
             val reagent = findReagent(conn, id) ?: throw UserError("Reaktiv topilmadi.")
             if (reagent.archived == archived) return@write
+            if (archived) {
+                val withStock = conn.query("SELECT id FROM batches WHERE reagent_id = ? ORDER BY id", id) { it.getLong(1) }
+                    .mapNotNull { batchId -> loadBatchInfo(conn, batchId)?.let { it to remainderOf(conn, batchId) } }
+                    .filter { it.second > 0 }
+                if (withStock.isNotEmpty()) {
+                    val list = withStock.take(3).joinToString(", ") { (b, left) ->
+                        (if (b.series.isNotEmpty()) b.series else "seriyasiz") + " — " + Qty.formatWithUnit(left, b.unit)
+                    } + if (withStock.size > 3) " …" else ""
+                    throw UserError(
+                        "«${reagent.name}» reaktivining ${withStock.size} ta partiyasida qoldiq bor ($list) — arxivlab bo‘lmaydi. " +
+                            "Avval qoldiqni «Hisobdan chiqarish» bilan hisobdan chiqaring, keyin arxivlang.",
+                    )
+                }
+            }
             conn.update("UPDATE reagents SET archived = ?, updated_at = ? WHERE id = ?", archived, clock.now(), id)
             audit.log(conn, if (archived) AuditAction.ARCHIVED else AuditAction.UNARCHIVED, "reagent", id, "«${reagent.name}»", reagentId = id)
         }
@@ -461,8 +499,9 @@ class Reagents(
         db.write { conn ->
             val batch = loadBatchInfo(conn, id) ?: throw UserError("Partiya topilmadi.")
             if (batch.archived == archived) return@write
-            conn.update("UPDATE batches SET archived = ?, updated_at = ? WHERE id = ?", archived, clock.now(), id)
             val remainder = remainderOf(conn, id)
+            if (archived && remainder > 0) throw UserError(archiveRefusal(batch, remainder))
+            conn.update("UPDATE batches SET archived = ?, updated_at = ? WHERE id = ?", archived, clock.now(), id)
             audit.log(
                 conn, if (archived) AuditAction.ARCHIVED else AuditAction.UNARCHIVED, "batch", id, batch.label,
                 reagentId = batch.reagentId, batchId = id, qtyText = "qoldiq " + Qty.formatWithUnit(remainder, batch.unit),
@@ -470,23 +509,51 @@ class Reagents(
         }
     }
 
+    private fun archiveRefusal(batch: BatchInfo, remainder: Long): String =
+        "${batch.label} partiyasida ${Qty.formatWithUnit(remainder, batch.unit)} qoldiq bor — arxivlab bo‘lmaydi. " +
+            "Avval qoldiqni «Hisobdan chiqarish» bilan hisobdan chiqaring, keyin arxivlang."
+
     /**
-     * Faqat tarixsiz partiya o‘chiriladi: unda boshlang‘ich kirimdan boshqa hech qanday operatsiya bo‘lmagan
-     * (xato kiritilgan partiyani darhol tuzatish uchun). Aks holda — arxivlash. Audit jurnalida yozuv qoladi.
+     * Partiyani o‘chirish mumkin bo‘lmasa — sababi (matnida «tarixi» so‘zi bor), mumkin bo‘lsa — null. [deleteBatch] qoidasi:
+     * faqat BUGUN kiritilgan va yagona operatsiyasi o‘zining boshlang‘ich kirimi bo‘lgan partiya (xato kiritilganini darhol
+     * tuzatish uchun). Oldinroq kiritilgan partiyaning kirimi hisobotlarda bor — u o‘chirilmaydi.
+     */
+    fun deleteBatchRefusal(id: Long): String? = db.read { conn -> deleteRefusal(conn, id) }
+
+    private fun deleteRefusal(conn: Connection, id: Long): String? {
+        val batch = loadBatchInfo(conn, id) ?: throw UserError("Partiya topilmadi.")
+        val receipts = conn.query("SELECT id, is_initial, cancelled_at FROM receipts WHERE batch_id = ?", id) { rs ->
+            Triple(rs.long("id"), rs.bool("is_initial"), rs.getString("cancelled_at") != null)
+        }
+        val items = conn.queryLong("SELECT COUNT(*) FROM issue_items WHERE batch_id = ?", id)
+        val movements = conn.query("SELECT kind FROM stock_movements WHERE batch_id = ?", id) { it.getString(1) }
+        val onlyInitial = receipts.size <= 1 && receipts.all { it.second && !it.third } &&
+            items == 0L && movements.all { it == "RECEIPT" } && movements.size == receipts.size
+        val remainder = remainderOf(conn, id)
+        val archiveHint = if (remainder > 0) {
+            " Arxivlash uchun avval qoldiqni (${Qty.formatWithUnit(remainder, batch.unit)}) «Hisobdan chiqarish» bilan chiqaring."
+        } else {
+            ""
+        }
+        if (!onlyInitial) return "Partiyaning operatsiyalar tarixi bor — o‘chirib bo‘lmaydi, arxivlang.$archiveHint"
+        val createdOn = conn.queryOne("SELECT created_at FROM batches WHERE id = ?", id) { it.dateTime("created_at") }?.toLocalDate()
+        if (createdOn != clock.today()) {
+            return "Partiya ${createdOn?.display() ?: "oldin"} da kiritilgan, kirim tarixi hisobotlarda bor" +
+                (batch.receivedOn?.let { " (${it.display()} da kelgan)" } ?: "") +
+                " — o‘chirib bo‘lmaydi. Xato kiritilgan bo‘lsa, kirimni sabab bilan bekor qiling, keyin arxivlang."
+        }
+        return null
+    }
+
+    /**
+     * Faqat tarixsiz partiya o‘chiriladi ([deleteBatchRefusal]): bugun kiritilgan va boshlang‘ich kirimdan boshqa hech
+     * qanday operatsiyasi yo‘q. Aks holda — [UserError] (matnida «tarixi»). Audit jurnalida yozuv qoladi. Reaktivning
+     * oxirgi partiyasi o‘chirilsa — reaktiv ham shu tranzaksiyada o‘chiriladi (nom takliflarida qolib ketmasin).
      */
     fun deleteBatch(id: Long) {
         db.write { conn ->
             val batch = loadBatchInfo(conn, id) ?: throw UserError("Partiya topilmadi.")
-            val receipts = conn.query("SELECT id, is_initial, cancelled_at FROM receipts WHERE batch_id = ?", id) { rs ->
-                Triple(rs.long("id"), rs.bool("is_initial"), rs.getString("cancelled_at") != null)
-            }
-            val items = conn.queryLong("SELECT COUNT(*) FROM issue_items WHERE batch_id = ?", id)
-            val movements = conn.query("SELECT kind FROM stock_movements WHERE batch_id = ?", id) { it.getString(1) }
-            val onlyInitial = receipts.size <= 1 && receipts.all { it.second && !it.third } &&
-                items == 0L && movements.all { it == "RECEIPT" } && movements.size == receipts.size
-            if (!onlyInitial) {
-                throw UserError("Partiyaning operatsiyalar tarixi bor — o‘chirib bo‘lmaydi, arxivlang.")
-            }
+            deleteRefusal(conn, id)?.let { throw UserError(it) }
             val remainder = remainderOf(conn, id)
             conn.update("INSERT INTO ledger_unlock(batch_id) VALUES (?)", id)
             conn.update("DELETE FROM stock_movements WHERE batch_id = ?", id)
@@ -497,6 +564,13 @@ class Reagents(
                 conn, AuditAction.DELETED, "batch", id, "${batch.label} partiyasi o‘chirildi (tarixi yo‘q edi)",
                 reagentId = batch.reagentId, batchId = id, qtyText = Qty.formatWithUnit(remainder, batch.unit),
             )
+            if (conn.queryLong("SELECT COUNT(*) FROM batches WHERE reagent_id = ?", batch.reagentId) == 0L) {
+                conn.update("DELETE FROM reagents WHERE id = ?", batch.reagentId)
+                audit.log(
+                    conn, AuditAction.DELETED, "reagent", batch.reagentId, "«${batch.name}» o‘chirildi (partiyasi qolmadi)",
+                    reagentId = batch.reagentId,
+                )
+            }
         }
     }
 
@@ -513,6 +587,20 @@ class Reagents(
     }
 
     // ---------------------------------------------------------------- yordamchilar
+
+    /** Audit uchun minimal qoldiq: "20 g" yoki "yo‘q". */
+    private fun minStockText(min: Long?, unit: MeasureUnit?): String =
+        if (min != null && unit != null) Qty.formatWithUnit(min, unit) else "yo‘q"
+
+    /** Audit uchun matn qiymati: «…» ichida, bo‘sh — «—», uzuni qisqartiriladi. */
+    private fun auditText(value: String): String {
+        val text = value.replace(Regex("\\s+"), " ").trim()
+        return "«" + when {
+            text.isEmpty() -> "—"
+            text.length > AUDIT_TEXT_MAX -> text.take(AUDIT_TEXT_MAX).trimEnd() + "…"
+            else -> text
+        } + "»"
+    }
 
     private fun parseMinStock(text: String?, unit: MeasureUnit?): Pair<Long, MeasureUnit>? {
         if (text.isNullOrBlank()) return null

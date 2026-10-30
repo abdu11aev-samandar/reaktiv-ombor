@@ -29,9 +29,12 @@ import java.time.LocalDateTime
 
 /**
  * «Barcha reaktivlar» jadvalining bitta qatori — bitta partiya. Miqdorlar asosiy birlikda, [unit] — partiya birligi.
- * [issuedQty] — bo‘lim va tumanlarga berilgani (qaytarilgani ayirilgan), [writtenOffQty] — hisobdan chiqarilgani.
+ * [issuedQty] — bo‘lim va tumanlarga berilgani (qaytarilgani ayirilgan, sof), [returnedQty] — ulardan qaytarilgani
+ * (berilgan jami = [issuedQty] + [returnedQty]), [writtenOffQty] — hisobdan chiqarilgani:
+ * kelgan − [issuedQty] − [writtenOffQty] = qoldiq.
  * [groupTotal]/[groupReceived] — shu reaktiv va o‘lchov turidagi arxivlanmagan BARCHA partiyalar yig‘indisi
- * (jadval filtrlariga bog‘liq emas), [groupUnit] da ko‘rsatiladi.
+ * (jadval filtrlariga bog‘liq emas), [groupUnit] da ko‘rsatiladi. [groupUsable] — ulardan muddati o‘tmaganlarining
+ * qoldig‘i: «minimal qoldiqdan kam» ([belowMin]) shu bilan solishtiriladi (muddati o‘tgan zaxira ishlatilmaydi).
  */
 data class BatchRow(
     val batchId: Long,
@@ -61,6 +64,8 @@ data class BatchRow(
     val archived: Boolean,
     val reagentArchived: Boolean,
     val belowMin: Boolean,
+    val returnedQty: Long = 0,
+    val groupUsable: Long = groupTotal,
 ) {
     val dimension: Dimension get() = unit.dimension
 }
@@ -90,7 +95,10 @@ data class BatchFilter(
     val reagentId: Long? = null,
 )
 
-/** «Umumiy zaxiralar»: reaktiv + o‘lchov turi bo‘yicha jami. */
+/**
+ * «Umumiy zaxiralar»: reaktiv + o‘lchov turi bo‘yicha jami. [issued] — sof (qaytarilgani ayirilgan), [returned] —
+ * qaytarilgani; [usableRemainder] — muddati o‘tmagan (arxivlanmagan) partiyalar qoldig‘i, [belowMin] shu bilan.
+ */
 data class StockTotal(
     val reagentId: Long,
     val name: String,
@@ -110,8 +118,15 @@ data class StockTotal(
     /** Qoldig‘i bor partiyalar ichida eng xavflisi; qoldiq yo‘q bo‘lsa — null. */
     val worstState: ExpiryState?,
     val reagentArchived: Boolean,
+    val returned: Long = 0,
+    val usableRemainder: Long = remainder,
 )
 
+/**
+ * Operatsiyalar filtri. [returnsUntil] — berish qatorlarining qaytarilgan miqdori ([IssueItemRow.returnedQty]) faqat shu
+ * sanagacha bo‘lgan qaytarishlardan (davr hisobotlari: davr oxirigacha — keyingi qaytarish yopilgan davrni o‘zgartirmaydi);
+ * null — hammasi. [IssueItemRow.returnedTotal] doim hammasi (qaytarish oynalari uchun).
+ */
 data class OpFilter(
     val from: LocalDate? = null,
     val to: LocalDate? = null,
@@ -123,6 +138,7 @@ data class OpFilter(
     val includeCancelled: Boolean = false,
     val batchId: Long? = null,
     val reagentId: Long? = null,
+    val returnsUntil: LocalDate? = null,
 )
 
 data class ReceiptRow(
@@ -148,6 +164,7 @@ data class ReceiptRow(
     val cancelledAt: LocalDateTime?,
     val cancelReason: String?,
     val correctsId: Long?,
+    val producedOn: LocalDate? = null,
 )
 
 data class IssueItemRow(
@@ -184,9 +201,14 @@ data class IssueItemRow(
     val cancelledAt: LocalDateTime?,
     val cancelReason: String?,
     val correctsId: Long?,
+    /** Barcha (bekor qilinmagan) qaytarishlar — [OpFilter.returnsUntil] dan qat’i nazar. */
+    val returnedTotal: Long = returnedQty,
 ) {
-    /** Berilgan − qaytarilgan. */
+    /** Berilgan − qaytarilgan ([OpFilter.returnsUntil] gacha). */
     val netQty: Long get() = qty - returnedQty
+
+    /** Hozir qaytarish mumkin bo‘lgan miqdor (barcha qaytarishlar ayirilgan). */
+    val returnableQty: Long get() = qty - returnedTotal
 }
 
 data class ReturnRow(
@@ -212,6 +234,10 @@ data class ReturnRow(
     val departmentId: Long?,
     val districtId: Long?,
     val issuedOn: LocalDate,
+    /** Qaytarilgan berishning partiya muddati, hujjat raqami va tashkiloti. */
+    val expiresOn: LocalDate? = null,
+    val docNo: String = "",
+    val organization: String = "",
 )
 
 /** Bo‘lim yoki tumanga berilgan jami: reaktiv + o‘lchov turi bo‘yicha. */
@@ -229,6 +255,11 @@ data class ReagentQtyTotal(
     val net: Long get() = issued - returned
 }
 
+/**
+ * Davr bo‘yicha jamilar «Davr uchun reaktivlar harakati» bilan bir xil: berilgan — davrdagi berishlar, qaytarilgan —
+ * davrdagi qaytarishlar (davrdan oldingi berishlarniki ham, [earlierReturns]); davrdagi berishning davr oxiridan keyingi
+ * qaytarishi hisobga olinmaydi.
+ */
 data class DepartmentSummary(
     val department: Place,
     /** Shu bo‘limda saqlanadigan (bo‘limga biriktirilgan) partiyalar. */
@@ -237,6 +268,8 @@ data class DepartmentSummary(
     val issuedTo: List<ReagentQtyTotal>,
     /** Bo‘limga berish tarixi (davr bo‘yicha, yangisi birinchi). */
     val history: List<IssueItemRow>,
+    /** Davr ichidagi, lekin davrdan oldingi berishlardan qaytarishlar (yangisi birinchi). */
+    val earlierReturns: List<ReturnRow> = emptyList(),
 )
 
 data class DistrictReagentTotal(
@@ -255,10 +288,13 @@ data class DistrictTotal(
     val net: Map<Dimension, Long>,
 )
 
+/** Davr bo‘yicha jamilar [DepartmentSummary] dagi qoida bilan. */
 data class DistrictSummary(
     val districts: List<DistrictTotal>,
     val perReagent: List<DistrictReagentTotal>,
     val items: List<IssueItemRow>,
+    /** Davr ichidagi, lekin davrdan oldingi berishlardan qaytarishlar (yangisi birinchi). */
+    val earlierReturns: List<ReturnRow> = emptyList(),
 )
 
 data class DepartmentStat(
@@ -376,6 +412,7 @@ class Queries(private val db: Database, private val audit: Audit) {
         val received: Long,
         val issued: Long,
         val writtenOff: Long,
+        val returned: Long,
     )
 
     private fun loadBatches(conn: Connection): List<BatchData> = conn.query(
@@ -385,13 +422,14 @@ class Queries(private val db: Database, private val audit: Audit) {
                    SUM(m.qty) AS remainder,
                    SUM(CASE WHEN m.receipt_id IS NOT NULL THEN m.qty ELSE 0 END) AS received,
                    SUM(CASE WHEN i.recipient_type IN ('DEPARTMENT','DISTRICT') THEN -m.qty ELSE 0 END) AS issued,
-                   SUM(CASE WHEN i.recipient_type = 'WRITE_OFF' THEN -m.qty ELSE 0 END) AS written_off
+                   SUM(CASE WHEN i.recipient_type = 'WRITE_OFF' THEN -m.qty ELSE 0 END) AS written_off,
+                   SUM(CASE WHEN m.return_id IS NOT NULL THEN m.qty ELSE 0 END) AS returned
             FROM stock_movements m LEFT JOIN issue_items i ON i.id = m.issue_item_id
             GROUP BY m.batch_id
         )
         SELECT b.*, r.name, r.name_key, r.formula, r.archived AS r_archived, r.min_stock, r.min_stock_unit, d.name AS dept_name,
                COALESCE(a.remainder, 0) AS remainder, COALESCE(a.received, 0) AS received,
-               COALESCE(a.issued, 0) AS issued, COALESCE(a.written_off, 0) AS written_off
+               COALESCE(a.issued, 0) AS issued, COALESCE(a.written_off, 0) AS written_off, COALESCE(a.returned, 0) AS returned
         FROM batches b
         JOIN reagents r ON r.id = b.reagent_id
         LEFT JOIN departments d ON d.id = b.department_id
@@ -423,28 +461,32 @@ class Queries(private val db: Database, private val audit: Audit) {
             received = rs.long("received"),
             issued = rs.long("issued"),
             writtenOff = rs.long("written_off"),
+            returned = rs.long("returned"),
         )
     }
 
     private data class GroupKey(val reagentId: Long, val dimension: Dimension)
 
-    private class Group(val total: Long, val received: Long, val unit: MeasureUnit)
+    /** [usable] — muddati o‘tmagan (muddatsizlar ham) partiyalar qoldig‘i. */
+    private class Group(val total: Long, val received: Long, val unit: MeasureUnit, val usable: Long)
 
     /** Guruh jamilari: arxivlanmagan partiyalar bo‘yicha (filtrlardan mustaqil). */
-    private fun groups(all: List<BatchData>): Map<GroupKey, Group> =
+    private fun groups(all: List<BatchData>, today: LocalDate): Map<GroupKey, Group> =
         all.groupBy { GroupKey(it.reagentId, it.unit.dimension) }.mapValues { (_, list) ->
             val live = list.filter { !it.archived }
             Group(
                 total = live.sumOf { it.remainder },
                 received = live.sumOf { it.received },
                 unit = MeasureUnit.largest(live.map { it.unit }) ?: MeasureUnit.largest(list.map { it.unit })!!,
+                usable = live.filter { expiryState(it.expiresOn, today) != ExpiryState.EXPIRED }.sumOf { it.remainder },
             )
         }
 
+    /** Minimal qoldiq muddati o‘tmagan qoldiq bilan solishtiriladi: faqat muddati o‘tgan zaxira «yetarli» hisoblanmaydi. */
     private fun BatchData.belowMin(group: Group?): Boolean {
         val min = minStock ?: return false
         val minUnit = minStockUnit ?: return false
-        return !reagentArchived && group != null && minUnit.dimension == unit.dimension && group.total < min
+        return !reagentArchived && group != null && minUnit.dimension == unit.dimension && group.usable < min
     }
 
     /**
@@ -453,7 +495,7 @@ class Queries(private val db: Database, private val audit: Audit) {
      */
     fun batchRows(filter: BatchFilter = BatchFilter(), today: LocalDate): List<BatchRow> = db.read { conn ->
         val all = loadBatches(conn)
-        val groups = groups(all)
+        val groups = groups(all, today)
         val districtBatches = filter.districtId?.let { id ->
             conn.query(
                 "SELECT DISTINCT batch_id FROM issue_items WHERE district_id = ? AND cancelled_at IS NULL",
@@ -507,6 +549,8 @@ class Queries(private val db: Database, private val audit: Audit) {
         archived = data.archived,
         reagentArchived = data.reagentArchived,
         belowMin = data.belowMin(group),
+        returnedQty = data.returned,
+        groupUsable = group.usable,
     )
 
     private fun matches(f: BatchFilter, data: BatchData, row: BatchRow, districtBatches: Set<Long>?): Boolean {
@@ -571,6 +615,8 @@ class Queries(private val db: Database, private val audit: Audit) {
                 nearestExpiry = withStock.mapNotNull { it.expiresOn }.minOrNull(),
                 worstState = withStock.maxByOrNull { it.state.severity }?.state,
                 reagentArchived = list.first().reagentArchived,
+                returned = list.sumOf { it.returnedQty },
+                usableRemainder = list.filter { !it.archived && it.state != ExpiryState.EXPIRED }.sumOf { it.remainder },
             )
         }.sortedWith(compareBy({ nameKey(it.name) }, { it.name }, { it.dimension.ordinal }))
     }
@@ -580,7 +626,7 @@ class Queries(private val db: Database, private val audit: Audit) {
     fun receipts(filter: OpFilter = OpFilter()): List<ReceiptRow> = db.read { conn ->
         conn.query(
             """
-            SELECT x.*, b.reagent_id, b.series, b.expires_on, b.unit, b.department_id, r.name, d.name AS dept_name
+            SELECT x.*, b.reagent_id, b.series, b.expires_on, b.produced_on, b.unit, b.department_id, r.name, d.name AS dept_name
             FROM receipts x
             JOIN batches b ON b.id = x.batch_id
             JOIN reagents r ON r.id = b.reagent_id
@@ -611,6 +657,7 @@ class Queries(private val db: Database, private val audit: Audit) {
                 cancelledAt = rs.dateTime("cancelled_at"),
                 cancelReason = rs.strOrNull("cancel_reason"),
                 correctsId = rs.longOrNull("corrects_id"),
+                producedOn = rs.date("produced_on"),
             )
         }.filter { (departmentId, row) ->
             (filter.includeCancelled || !row.cancelled) &&
@@ -629,7 +676,9 @@ class Queries(private val db: Database, private val audit: Audit) {
         """
         SELECT i.*, h.issued_on, h.doc_no, h.issued_by, h.note AS issue_note,
                b.reagent_id, b.series, b.expires_on, b.unit, r.name, d.name AS dept_name, t.name AS district_name,
-               COALESCE((SELECT SUM(x.qty) FROM returns x WHERE x.issue_item_id = i.id AND x.cancelled_at IS NULL), 0) AS returned
+               COALESCE((SELECT SUM(x.qty) FROM returns x WHERE x.issue_item_id = i.id AND x.cancelled_at IS NULL), 0) AS returned,
+               COALESCE((SELECT SUM(x.qty) FROM returns x WHERE x.issue_item_id = i.id AND x.cancelled_at IS NULL
+                         AND x.returned_on <= ?), 0) AS returned_until
         FROM issue_items i
         JOIN issues h ON h.id = i.issue_id
         JOIN batches b ON b.id = i.batch_id
@@ -638,6 +687,7 @@ class Queries(private val db: Database, private val audit: Audit) {
         LEFT JOIN districts t ON t.id = i.district_id
         ORDER BY h.issued_on DESC, i.id DESC
         """,
+        filter.returnsUntil ?: MAX_DATE,
     ) { rs ->
         val type = RecipientType.valueOf(rs.str("recipient_type"))
         val deptName = rs.strOrNull("dept_name")
@@ -670,7 +720,7 @@ class Queries(private val db: Database, private val audit: Audit) {
             qty = rs.long("qty"),
             enteredQty = rs.str("entered_qty"),
             enteredUnit = rs.unit("entered_unit"),
-            returnedQty = rs.long("returned"),
+            returnedQty = rs.long(if (filter.returnsUntil != null) "returned_until" else "returned"),
             fefoOverride = rs.bool("fefo_override"),
             expiredOverride = rs.bool("expired_override"),
             note = rs.str("note"),
@@ -679,6 +729,7 @@ class Queries(private val db: Database, private val audit: Audit) {
             cancelledAt = rs.dateTime("cancelled_at"),
             cancelReason = rs.strOrNull("cancel_reason"),
             correctsId = rs.longOrNull("corrects_id"),
+            returnedTotal = rs.long("returned"),
         )
     }.filter { row ->
         (filter.includeCancelled || !row.cancelled) &&
@@ -695,8 +746,8 @@ class Queries(private val db: Database, private val audit: Audit) {
     fun returns(filter: OpFilter = OpFilter()): List<ReturnRow> = db.read { conn ->
         conn.query(
             """
-            SELECT x.*, i.batch_id, i.recipient_type, i.department_id, i.district_id, h.issued_on,
-                   b.reagent_id, b.series, b.unit, r.name, d.name AS dept_name, t.name AS district_name
+            SELECT x.*, i.batch_id, i.recipient_type, i.department_id, i.district_id, i.organization, h.issued_on, h.doc_no,
+                   b.reagent_id, b.series, b.unit, b.expires_on, r.name, d.name AS dept_name, t.name AS district_name
             FROM returns x
             JOIN issue_items i ON i.id = x.issue_item_id
             JOIN issues h ON h.id = i.issue_id
@@ -735,6 +786,9 @@ class Queries(private val db: Database, private val audit: Audit) {
                 departmentId = rs.longOrNull("department_id"),
                 districtId = rs.longOrNull("district_id"),
                 issuedOn = rs.date("issued_on")!!,
+                expiresOn = rs.date("expires_on"),
+                docNo = rs.str("doc_no"),
+                organization = rs.str("organization"),
             )
         }.filter { row ->
             (filter.includeCancelled || !row.cancelled) &&
@@ -758,43 +812,89 @@ class Queries(private val db: Database, private val audit: Audit) {
             }.firstOrNull()
         } ?: throw UserError("Bo‘lim topilmadi.")
         val owned = batchRows(BatchFilter(departmentId = departmentId), today)
-        val history = issueItems(OpFilter(from = from, to = to, departmentId = departmentId, recipientType = RecipientType.DEPARTMENT))
-        return DepartmentSummary(department, owned, totalsByReagent(history), history)
+        val history = issueItems(
+            OpFilter(from = from, to = to, departmentId = departmentId, recipientType = RecipientType.DEPARTMENT, returnsUntil = to),
+        )
+        val earlier = earlierReturns(from, to, RecipientType.DEPARTMENT, departmentId = departmentId)
+        return DepartmentSummary(department, owned, totalsByReagent(history, earlier), history, earlier)
     }
 
+    /**
+     * Tumanlarga berilganlar davr bo‘yicha: berish qatorlarining qaytarilgani — davr oxirigacha, davrdan oldingi berishlarning
+     * davrdagi qaytarishlari — [DistrictSummary.earlierReturns] (jamilarda ayiriladi). Natija «Davr uchun reaktivlar
+     * harakati» hisobotidagi berilgan/qaytarilgan bilan bir xil.
+     */
     fun districtSummary(districtId: Long? = null, from: LocalDate? = null, to: LocalDate? = null): DistrictSummary {
-        val items = issueItems(OpFilter(from = from, to = to, districtId = districtId, recipientType = RecipientType.DISTRICT))
-        val byDistrict = items.groupBy { it.districtId!! }
-        val districts = byDistrict.map { (id, list) ->
-            DistrictTotal(
-                districtId = id,
-                name = list.first().districtName.orEmpty(),
-                items = list.size,
-                firstDate = list.minOfOrNull { it.issuedOn },
-                lastDate = list.maxOfOrNull { it.issuedOn },
-                net = list.groupBy { it.unit.dimension }.mapValues { (_, l) -> l.sumOf { it.netQty } },
-            )
-        }.sortedWith(compareBy({ nameKey(it.name) }, { it.districtId }))
-        val perReagent = byDistrict.flatMap { (id, list) ->
-            totalsByReagent(list).map { DistrictReagentTotal(id, list.first().districtName.orEmpty(), it) }
-        }.sortedWith(compareBy({ nameKey(it.districtName) }, { nameKey(it.total.name) }, { it.total.dimension.ordinal }))
-        return DistrictSummary(districts, perReagent, items)
+        val items = issueItems(
+            OpFilter(from = from, to = to, districtId = districtId, recipientType = RecipientType.DISTRICT, returnsUntil = to),
+        )
+        val earlier = earlierReturns(from, to, RecipientType.DISTRICT, districtId = districtId)
+        return districtSummaryOf(items, earlier)
     }
 
-    private fun totalsByReagent(items: List<IssueItemRow>): List<ReagentQtyTotal> =
-        items.groupBy { it.reagentId to it.unit.dimension }.map { (key, list) ->
-            ReagentQtyTotal(
-                reagentId = key.first,
-                name = list.first().name,
-                dimension = key.second,
-                unit = MeasureUnit.largest(list.map { it.unit })!!,
-                issued = list.sumOf { it.qty },
-                returned = list.sumOf { it.returnedQty },
-                items = list.size,
-                firstDate = list.minOfOrNull { it.issuedOn },
-                lastDate = list.maxOfOrNull { it.issuedOn },
-            )
-        }.sortedWith(compareBy({ nameKey(it.name) }, { it.dimension.ordinal }))
+    /** Davr ichidagi, lekin davr boshidan oldingi berishlardan qaytarishlar ([from] null bo‘lsa — yo‘q). */
+    internal fun earlierReturns(
+        from: LocalDate?,
+        to: LocalDate?,
+        type: RecipientType,
+        departmentId: Long? = null,
+        districtId: Long? = null,
+    ): List<ReturnRow> {
+        if (from == null) return emptyList()
+        return returns(OpFilter(from = from, to = to, departmentId = departmentId, districtId = districtId, recipientType = type))
+            .filter { it.issuedOn < from }
+    }
+
+    internal companion object {
+        /** Tumanlar jamlari: berishlar + davrdan oldingi berishlarning davrdagi qaytarishlari (o‘lchov turlari qo‘shilmaydi). */
+        fun districtSummaryOf(items: List<IssueItemRow>, earlier: List<ReturnRow>): DistrictSummary {
+            val byDistrict = items.groupBy { it.districtId!! }
+            val returnsByDistrict = earlier.groupBy { it.districtId!! }
+            val names = items.associate { it.districtId!! to it.districtName.orEmpty() } +
+                earlier.filter { it.districtId!! !in byDistrict }.associate { it.districtId!! to it.recipientName }
+            val districts = names.map { (id, name) ->
+                val list = byDistrict[id].orEmpty()
+                val back = returnsByDistrict[id].orEmpty()
+                DistrictTotal(
+                    districtId = id,
+                    name = name,
+                    items = list.size,
+                    firstDate = list.minOfOrNull { it.issuedOn },
+                    lastDate = list.maxOfOrNull { it.issuedOn },
+                    net = (list.map { it.unit.dimension to it.netQty } + back.map { it.unit.dimension to -it.qty })
+                        .groupBy({ it.first }, { it.second }).mapValues { (_, l) -> l.sum() },
+                )
+            }.sortedWith(compareBy({ nameKey(it.name) }, { it.districtId }))
+            val perReagent = names.flatMap { (id, name) ->
+                totalsByReagent(byDistrict[id].orEmpty(), returnsByDistrict[id].orEmpty()).map { DistrictReagentTotal(id, name, it) }
+            }.sortedWith(compareBy({ nameKey(it.districtName) }, { nameKey(it.total.name) }, { it.total.dimension.ordinal }))
+            return DistrictSummary(districts, perReagent, items, earlier)
+        }
+
+        /**
+         * Reaktiv + o‘lchov turi bo‘yicha jamlar: berilgan — [items] jami, qaytarilgan — ularning qaytarilgani + [earlier]
+         * (davrdan oldingi berishlarning davrdagi qaytarishlari). Faqat qaytarishi bo‘lgan reaktivda berishlar soni 0.
+         */
+        fun totalsByReagent(items: List<IssueItemRow>, earlier: List<ReturnRow> = emptyList()): List<ReagentQtyTotal> {
+            val issuedBy = items.groupBy { it.reagentId to it.unit.dimension }
+            val returnedBy = earlier.groupBy { it.reagentId to it.unit.dimension }
+            return (issuedBy.keys + returnedBy.keys).map { key ->
+                val list = issuedBy[key].orEmpty()
+                val back = returnedBy[key].orEmpty()
+                ReagentQtyTotal(
+                    reagentId = key.first,
+                    name = list.firstOrNull()?.name ?: back.first().name,
+                    dimension = key.second,
+                    unit = MeasureUnit.largest(list.map { it.unit } + back.map { it.unit })!!,
+                    issued = list.sumOf { it.qty },
+                    returned = list.sumOf { it.returnedQty } + back.sumOf { it.qty },
+                    items = list.size,
+                    firstDate = list.minOfOrNull { it.issuedOn },
+                    lastDate = list.maxOfOrNull { it.issuedOn },
+                )
+            }.sortedWith(compareBy({ nameKey(it.name) }, { it.dimension.ordinal }))
+        }
+    }
 
     // ---------------------------------------------------------------- bosh sahifa va eslatmalar
 
@@ -840,8 +940,10 @@ class Queries(private val db: Database, private val audit: Audit) {
             byDepartment = byDepartment,
             byDistrict = byDistrict,
             stateCounts = ExpiryState.entries.associateWith { state -> withStock.count { it.state == state } },
-            recentReceipts = receipts(OpFilter()).sortedByDescending { it.id }.take(10),
-            recentIssues = items.sortedByDescending { it.id }.take(10),
+            // So‘nggi operatsiyalar — operatsiya sanasi bo‘yicha (yangisi birinchi), bir kunda — keyin kiritilgani birinchi.
+            recentReceipts = receipts(OpFilter())
+                .sortedWith(compareByDescending<ReceiptRow> { it.receivedOn }.thenByDescending { it.id }).take(10),
+            recentIssues = items.sortedWith(compareByDescending<IssueItemRow> { it.issuedOn }.thenByDescending { it.id }).take(10),
         )
     }
 
@@ -880,10 +982,16 @@ class Queries(private val db: Database, private val audit: Audit) {
                     rs.long("min_stock") to rs.unit("min_stock_unit")
                 }.first()
             }
+            // Muddati o‘tgan zaxira «yetarli» hisoblanmaydi: bo‘lsa — yaroqli va muddati o‘tgan qoldiq alohida aytiladi.
+            val expiredPart = row.groupTotal - row.groupUsable
+            val stockText = if (expiredPart > 0) {
+                "yaroqli qoldiq ${Qty.formatWithUnit(row.groupUsable, row.groupUnit)} (muddati o‘tgan ${Qty.formatWithUnit(expiredPart, row.groupUnit)})"
+            } else {
+                "umumiy qoldiq ${Qty.formatWithUnit(row.groupTotal, row.groupUnit)}"
+            }
             result += Notification(
                 NotificationKind.BELOW_MIN,
-                "«${row.name}»: umumiy qoldiq ${Qty.formatWithUnit(row.groupTotal, row.groupUnit)} — " +
-                    "minimal ${Qty.formatWithUnit(min.first, min.second)} dan kam",
+                "«${row.name}»: $stockText — minimal ${Qty.formatWithUnit(min.first, min.second)} dan kam",
                 NotificationTarget.STOCK, row.reagentId, null, null,
             )
         }
