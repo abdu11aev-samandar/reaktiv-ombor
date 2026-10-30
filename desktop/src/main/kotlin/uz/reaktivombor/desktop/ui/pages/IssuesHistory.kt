@@ -21,6 +21,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import uz.reaktivombor.desktop.core.DuplicateOperationError
 import uz.reaktivombor.desktop.core.ExpiredBatchError
 import uz.reaktivombor.desktop.core.ExpiryState
 import uz.reaktivombor.desktop.core.MeasureUnit
@@ -124,6 +125,7 @@ internal fun IssuesHistorySection(state: AppState, modifier: Modifier = Modifier
     val items = remember(tick, query) { state.load(emptyList()) { state.services.queries.issueItems(query) } }
     val returns = remember(tick, query) { state.load(emptyList()) { state.services.queries.returns(query) } }
     val districts = remember(tick) { state.load(emptyList()) { state.services.directory.districts(includeInactive = true) } }
+    val departments = remember(tick) { state.load(emptyList()) { state.services.directory.departments(includeInactive = true) } }
     val correctedIds = remember(items) { items.mapNotNull { it.correctsId }.toSet() }
     val confirm = rememberConfirmState()
     val reasons = rememberOpsReasonState()
@@ -249,18 +251,19 @@ internal fun IssuesHistorySection(state: AppState, modifier: Modifier = Modifier
                 modifier = Modifier.width(170.dp),
                 testTag = "issues-filter-type",
             )
-            DepartmentSelect(
-                state, filters.departmentId, { filters = filters.copy(departmentId = it) },
-                placeholder = "Hammasi", allowAdd = false, modifier = Modifier.width(170.dp), testTag = "issues-filter-department",
+            // Filtrda nofaol bo‘lim va tumanlar ham bor: ularga avval berilganlar tarixda qoladi.
+            IssuesPlaceFilter(
+                places = departments,
+                value = filters.departmentId,
+                onChange = { filters = filters.copy(departmentId = it) },
+                label = "Bo‘lim",
+                testTag = "issues-filter-department",
             )
-            SelectField(
-                value = districts.firstOrNull { it.id == filters.districtId },
-                options = listOf<Place?>(null) + districts,
-                onSelect = { filters = filters.copy(districtId = it?.id) },
+            IssuesPlaceFilter(
+                places = districts,
+                value = filters.districtId,
+                onChange = { filters = filters.copy(districtId = it) },
                 label = "Tuman",
-                placeholder = "Hammasi",
-                optionLabel = { it?.name ?: "— Hammasi —" },
-                modifier = Modifier.width(170.dp),
                 testTag = "issues-filter-district",
             )
             CheckField(filters.includeCancelled, { filters = filters.copy(includeCancelled = it) }, "Bekor qilinganlar", testTag = "issues-filter-cancelled")
@@ -281,7 +284,7 @@ internal fun IssuesHistorySection(state: AppState, modifier: Modifier = Modifier
                 rowKey = { it.id },
                 layout = itemLayout,
                 modifier = Modifier.fillMaxWidth().height(IssuesHistoryTableHeight),
-                rowBackground = { if (it.cancelled) AppColors.SurfaceAlt else null },
+                rowBackground = { if (it.cancelled) OpsInactiveRowColor else null },
                 selection = itemSelection,
                 listState = itemList,
                 emptyText = if (filters.activeCount > 0) "Filtrga mos berish topilmadi" else "Hali berish yo‘q",
@@ -302,7 +305,7 @@ internal fun IssuesHistorySection(state: AppState, modifier: Modifier = Modifier
                 rowKey = { it.id },
                 layout = returnLayout,
                 modifier = Modifier.fillMaxWidth().height(IssuesHistoryTableHeight),
-                rowBackground = { if (it.cancelled) AppColors.SurfaceAlt else null },
+                rowBackground = { if (it.cancelled) OpsInactiveRowColor else null },
                 selection = returnSelection,
                 listState = returnList,
                 emptyText = if (filters.activeCount > 0) "Filtrga mos qaytarish topilmadi" else "Hali qaytarish yo‘q",
@@ -318,13 +321,43 @@ internal fun IssuesHistorySection(state: AppState, modifier: Modifier = Modifier
     historyBatch?.let { id -> BatchHistoryDialog(state, id) { historyBatch = null } }
 }
 
+/**
+ * Bo‘lim yoki tuman filtri: hammasi — nofaollari ham, «(nofaol)» belgisi bilan (eski berishlarni ham topish uchun).
+ * Tanlanganini [Place.id] bo‘yicha qaytaradi; null — «Hammasi».
+ */
+@Composable
+private fun IssuesPlaceFilter(places: List<Place>, value: Long?, onChange: (Long?) -> Unit, label: String, testTag: String) {
+    SelectField(
+        value = places.firstOrNull { it.id == value },
+        options = listOf<Place?>(null) + places,
+        onSelect = { onChange(it?.id) },
+        label = label,
+        placeholder = "Hammasi",
+        optionLabel = { place -> place?.let { it.name + if (it.active) "" else " (nofaol)" } ?: "— Hammasi —" },
+        modifier = Modifier.width(170.dp),
+        testTag = testTag,
+    )
+}
+
+/**
+ * Berish tarixi ustunlari. Bekor qilingan/tuzatilgan qator: sanasi oldida «bekor»/«tuzatilgan» belgisi, miqdori kulrang
+ * va ustidan chizilgan (Kirimlar jadvali bilan bir xil).
+ */
 private fun issueItemColumns(correctedIds: Set<Long>, actions: (IssueItemRow) -> List<RowAction>): List<TableColumn<IssueItemRow>> = listOf(
-    textColumn("date", "Sana", 96.dp, ColumnAlign.END, sortKey = { it.issuedOn }) { dateText(it.issuedOn) },
+    TableColumn(
+        id = "date", title = "Sana", width = OpsDateColumnWidth, align = ColumnAlign.END, sortKey = { it.issuedOn },
+        text = { dateText(it.issuedOn) },
+        cell = { row -> OpsDateCell(dateText(row.issuedOn), opsStatus(row.id, row.cancelled, correctedIds)) },
+    ),
     textColumn("doc", "Hujjat", 90.dp) { it.docNo.ifBlank { "—" } },
     textColumn("name", "Reaktiv", 170.dp) { it.name },
     textColumn("series", "Seriya", 92.dp) { it.series.ifBlank { "—" } },
     textColumn("expires", "Yaroqlilik muddati", 108.dp, ColumnAlign.END, sortKey = { it.expiresOn }) { dateText(it.expiresOn) },
-    textColumn("qty", "Miqdor", 86.dp, ColumnAlign.END, sortKey = { it.qty }) { it.enteredQty },
+    TableColumn(
+        id = "qty", title = "Miqdor", width = 86.dp, align = ColumnAlign.END, sortKey = { it.qty },
+        text = { it.enteredQty },
+        cell = { row -> OpsQtyCell(row.enteredQty, opsStatus(row.id, row.cancelled, correctedIds)) },
+    ),
     textColumn("unit", "Birlik", 60.dp, ColumnAlign.CENTER) { it.enteredUnit.code },
     textColumn("recipient", "Qabul qiluvchi", 190.dp) { recipientText(it.recipientType, it.recipientName) },
     textColumn("org", "Tashkilot", 190.dp) { it.organization.ifBlank { "—" } },
@@ -354,11 +387,20 @@ private fun issueItemColumns(correctedIds: Set<Long>, actions: (IssueItemRow) ->
     actionsColumn(width = 140.dp, maxInline = 4, actions = actions),
 )
 
+/** Qaytarishlar ustunlari: bekor qilingan qaytarish — sanasi oldida «bekor», miqdori ustidan chizilgan. */
 private fun returnColumns(actions: (ReturnRow) -> List<RowAction>): List<TableColumn<ReturnRow>> = listOf(
-    textColumn("date", "Qaytarilgan sana", 112.dp, ColumnAlign.END, sortKey = { it.returnedOn }) { dateText(it.returnedOn) },
+    TableColumn(
+        id = "date", title = "Qaytarilgan sana", width = OpsDateColumnWidth, align = ColumnAlign.END, sortKey = { it.returnedOn },
+        text = { dateText(it.returnedOn) },
+        cell = { row -> OpsDateCell(dateText(row.returnedOn), if (row.cancelled) OpsStatus.CANCELLED else OpsStatus.ACTIVE) },
+    ),
     textColumn("name", "Reaktiv", 180.dp) { it.name },
     textColumn("series", "Seriya", 96.dp) { it.series.ifBlank { "—" } },
-    textColumn("qty", "Miqdor", 90.dp, ColumnAlign.END, sortKey = { it.qty }) { it.enteredQty },
+    TableColumn(
+        id = "qty", title = "Miqdor", width = 90.dp, align = ColumnAlign.END, sortKey = { it.qty },
+        text = { it.enteredQty },
+        cell = { row -> OpsQtyCell(row.enteredQty, if (row.cancelled) OpsStatus.CANCELLED else OpsStatus.ACTIVE) },
+    ),
     textColumn("unit", "Birlik", 60.dp, ColumnAlign.CENTER) { it.enteredUnit.code },
     textColumn("from", "Kimdan", 190.dp) { recipientText(it.recipientType, it.recipientName) },
     textColumn("issued", "Berilgan sana", 104.dp, ColumnAlign.END, sortKey = { it.issuedOn }) { dateText(it.issuedOn) },
@@ -386,21 +428,39 @@ private fun IssuesReturnDialog(state: AppState, row: IssueItemRow, onDismiss: ()
     var reason by remember { mutableStateOf("") }
     var receivedBy by remember { mutableStateOf(actor) }
     var dialogError by remember { mutableStateOf<String?>(null) }
+    val confirm = rememberConfirmState()
     val (base, parseError) = opsParseQty(qty, unit, "Qaytarilgan miqdor")
     val tooMuch = base != null && base > row.netQty
     val liveError = parseError ?: if (tooMuch) "Ko‘pi bilan ${row.amount(row.netQty)} qaytarish mumkin." else null
 
-    fun save() {
+    // Takroriy qaytarish (2 daqiqa ichida xuddi shunday) — tasdiqlansa, qayta yuboriladi.
+    fun save(confirmDuplicate: Boolean = false) {
         dialogError = null
         state.run(
-            { state.services.stock.returnItem(row.id, ReturnInput(date = date, qtyText = qty, unit = unit, reason = reason, receivedBy = receivedBy)) },
+            {
+                state.services.stock.returnItem(
+                    row.id,
+                    ReturnInput(date = date, qtyText = qty, unit = unit, reason = reason, receivedBy = receivedBy),
+                    confirmDuplicate,
+                )
+            },
             form = form,
             onError = { e ->
-                if (e.fields.isEmpty()) {
-                    dialogError = e.message
-                    true
-                } else {
-                    false
+                when {
+                    e is DuplicateOperationError -> {
+                        confirm.ask(
+                            title = "Takroriy qaytarish",
+                            message = e.message,
+                            confirmLabel = "Baribir saqlash",
+                            dismissLabel = "Orqaga",
+                        ) { save(confirmDuplicate = true) }
+                        true
+                    }
+                    e.fields.isEmpty() -> {
+                        dialogError = e.message
+                        true
+                    }
+                    else -> false
                 }
             },
         ) {
@@ -459,6 +519,7 @@ private fun IssuesReturnDialog(state: AppState, row: IssueItemRow, onDismiss: ()
             dialogError?.let { OpsNotice(it, Severity.ERROR, Modifier.fillMaxWidth(), testTag = "ret-error") }
         }
     }
+    ConfirmHost(confirm, state.busy)
 }
 
 // ---------------------------------------------------------------- tuzatish oynasi
@@ -600,6 +661,7 @@ private fun IssuesCorrectDialog(state: AppState, row: IssueItemRow, onDismiss: (
                     RecipientType.DISTRICT -> IssuesDistrictField(
                         districtName, { districtName = it; form.clear("districtName") }, districtNames,
                         form["districtName"] ?: form["districtId"], Modifier.weight(1f), "ic-district",
+                        inactiveNames = rememberInactiveDistrictNames(state),
                     )
                     RecipientType.WRITE_OFF -> Unit
                 }

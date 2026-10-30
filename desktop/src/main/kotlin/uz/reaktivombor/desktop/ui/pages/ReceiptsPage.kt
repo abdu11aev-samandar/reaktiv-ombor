@@ -430,7 +430,7 @@ fun ReceiptsPage(state: AppState) {
                 rowKey = { it.id },
                 layout = layout,
                 modifier = Modifier.fillMaxWidth().height(OpsTableHeight),
-                rowBackground = { if (it.cancelled) AppColors.SurfaceAlt else null },
+                rowBackground = { if (it.cancelled) OpsInactiveRowColor else null },
                 selection = selection,
                 listState = tableList,
                 onRowDoubleClick = { if (!it.cancelled) correcting = it },
@@ -446,12 +446,24 @@ fun ReceiptsPage(state: AppState) {
     historyBatch?.let { id -> BatchHistoryDialog(state, id) { historyBatch = null } }
 }
 
-/** Kirimlar jadvali ustunlari. */
+/**
+ * Kirimlar jadvali ustunlari. Bekor qilingan/tuzatilgan kirim: sanasi oldida «bekor»/«tuzatilgan» belgisi, miqdori
+ * kulrang va ustidan chizilgan — «Holat» ustuni ekrandan tashqarida bo‘lsa ham adashtirilmaydi.
+ */
 private fun receiptsColumns(correctedIds: Set<Long>, actions: (ReceiptRow) -> List<RowAction>): List<TableColumn<ReceiptRow>> = listOf(
-    textColumn("date", "Sana", 96.dp, ColumnAlign.END, sortKey = { it.receivedOn }) { dateText(it.receivedOn) },
+    TableColumn(
+        id = "date", title = "Sana", width = OpsDateColumnWidth, align = ColumnAlign.END, sortKey = { it.receivedOn },
+        text = { dateText(it.receivedOn) },
+        cell = { row -> OpsDateCell(dateText(row.receivedOn), opsStatus(row.id, row.cancelled, correctedIds)) },
+    ),
     textColumn("name", "Reaktiv nomi", 180.dp) { it.name },
     textColumn("series", "Seriya", 96.dp) { it.series.ifBlank { "—" } },
-    textColumn("qty", "Miqdor", 90.dp, ColumnAlign.END, sortKey = { it.qty }) { it.enteredQty },
+    textColumn("expires", "Yaroqlilik muddati", 108.dp, ColumnAlign.END, sortKey = { it.expiresOn }) { dateText(it.expiresOn) },
+    TableColumn(
+        id = "qty", title = "Miqdor", width = 90.dp, align = ColumnAlign.END, sortKey = { it.qty },
+        text = { it.enteredQty },
+        cell = { row -> OpsQtyCell(row.enteredQty, opsStatus(row.id, row.cancelled, correctedIds)) },
+    ),
     textColumn("unit", "Birlik", 62.dp, ColumnAlign.CENTER) { it.enteredUnit.code },
     textColumn("type", "Turi", 112.dp) { if (it.isInitial) "Boshlang‘ich" else "Qo‘shimcha" },
     textColumn("receivedBy", "Qabul qilgan", 130.dp) { it.receivedBy.ifBlank { "—" } },
@@ -695,6 +707,8 @@ private fun ReceiptsBatchItem(row: BatchRow, highlighted: Boolean, current: Bool
                     color = if (row.remainder == 0L) AppColors.Muted else AppColors.Text,
                     textAlign = TextAlign.End,
                     maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.width(90.dp),
                 )
             }

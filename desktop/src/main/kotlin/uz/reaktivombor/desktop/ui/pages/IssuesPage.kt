@@ -223,6 +223,12 @@ fun IssuesPage(state: AppState) {
     }
 
     fun validate(): Boolean {
+        // Nofaol tumanga berib bo‘lmaydi (servis ham rad etadi) — saqlashdan oldin qatorda ko‘rsatiladi.
+        val inactiveDistricts = if (form.lines.any { it.type == RecipientType.DISTRICT }) {
+            state.load(emptyList()) { state.services.directory.districts(includeInactive = true) }.filter { !it.active }.map { it.name }
+        } else {
+            emptyList()
+        }
         val headerErrors = linkedMapOf<String, String>()
         if (form.date == null) headerErrors["date"] = "Berish sanasi kiritilishi shart."
         form.header.show(headerErrors)
@@ -240,7 +246,10 @@ fun IssuesPage(state: AppState) {
             }
             when (line.type) {
                 RecipientType.DEPARTMENT -> if (line.departmentId == null) e["departmentId"] = "Bo‘limni tanlang."
-                RecipientType.DISTRICT -> if (line.districtName.isBlank()) e["districtName"] = "Tumanni tanlang yoki yozing."
+                RecipientType.DISTRICT -> when {
+                    line.districtName.isBlank() -> e["districtName"] = "Tumanni tanlang yoki yozing."
+                    issuesIsInactiveDistrict(line.districtName, inactiveDistricts) -> e["districtName"] = INACTIVE_DISTRICT_ERROR
+                }
                 RecipientType.WRITE_OFF -> if (line.note.isBlank()) e["note"] = "Hisobdan chiqarish sababini yozing."
             }
             line.errors = e

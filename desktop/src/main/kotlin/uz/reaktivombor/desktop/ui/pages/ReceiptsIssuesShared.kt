@@ -8,6 +8,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
@@ -50,6 +51,8 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpOffset
@@ -134,6 +137,85 @@ internal fun OpsStatusCell(status: OpsStatus, reason: String?, isCorrection: Boo
             }
         }
     }
+}
+
+/**
+ * Bekor qilingan / tuzatilgan qator foni: sichqoncha ustidagi rangdan to‘qroq — faol qatorlar bilan adashtirilmasin.
+ * Asosiy belgi baribir sana va miqdor kataklarida ([OpsDateCell], [OpsQtyCell]).
+ */
+internal val OpsInactiveRowColor = Color(0xFFECEEF2)
+
+/** Operatsiya sanasi ustuni: sana va (bekor qilingan/tuzatilgan qatorda) uning oldidagi kichik belgi sig‘adi. */
+internal val OpsDateColumnWidth = 178.dp
+
+/** Qator jamga qo‘shilmaydigan holatdami (bekor qilingan yoki tuzatilgan). */
+internal val OpsStatus.isVoid: Boolean get() = this != OpsStatus.ACTIVE
+
+/**
+ * Sana katagidagi kichik belgi: «bekor» (qizil) yoki «tuzatilgan» (kulrang qator ustida oq). To‘liq holat va sabab —
+ * «Holat» ustunida.
+ */
+@Composable
+internal fun OpsVoidChip(status: OpsStatus, modifier: Modifier = Modifier) {
+    val (text, background, foreground) = when (status) {
+        OpsStatus.ACTIVE -> return
+        OpsStatus.CANCELLED -> Triple("bekor", StatusStyles.RED.background, StatusStyles.RED.foreground)
+        OpsStatus.CORRECTED -> Triple("tuzatilgan", AppColors.Surface, AppColors.Muted)
+    }
+    Text(
+        text,
+        fontSize = 11.sp,
+        lineHeight = 15.sp,
+        fontWeight = FontWeight.SemiBold,
+        color = foreground,
+        maxLines = 1,
+        softWrap = false,
+        overflow = TextOverflow.Ellipsis,
+        modifier = modifier.clip(RoundedCornerShape(9.dp)).background(background).padding(horizontal = 6.dp, vertical = 1.dp),
+    )
+}
+
+/**
+ * Operatsiya sanasi: bekor qilingan/tuzatilgan qatorda sana kulrang va oldida [OpsVoidChip] — holat ustuni ekrandan
+ * tashqarida bo‘lsa ham qator boshida ko‘rinadi. Joy yetmasa belgi qisqaradi, sana emas.
+ */
+@Composable
+internal fun OpsDateCell(text: String, status: OpsStatus) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
+        if (status.isVoid) {
+            OpsVoidChip(status, Modifier.weight(1f, fill = false))
+            Spacer(Modifier.width(6.dp))
+        }
+        Text(
+            text,
+            fontSize = 13.sp,
+            lineHeight = 17.sp,
+            color = if (status.isVoid) AppColors.Muted else AppColors.Text,
+            maxLines = 1,
+            softWrap = false,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/**
+ * Operatsiya miqdori: bekor qilingan/tuzatilgan bo‘lsa — kulrang va ustidan chizilgan (qoldiqqa ta’sir qilmaydi, jamga
+ * qo‘shib o‘qilmasin). Raqam minglar bo‘shlig‘ida bo‘linmaydi; sig‘masa «…» bilan qisqaradi.
+ */
+@Composable
+internal fun OpsQtyCell(text: String, status: OpsStatus) {
+    Text(
+        text,
+        fontSize = 13.sp,
+        lineHeight = 17.sp,
+        color = if (status.isVoid) AppColors.Muted else AppColors.Text,
+        textDecoration = if (status.isVoid) TextDecoration.LineThrough else null,
+        maxLines = 1,
+        softWrap = false,
+        overflow = TextOverflow.Ellipsis,
+        textAlign = TextAlign.End,
+        modifier = Modifier.fillMaxWidth(),
+    )
 }
 
 /** Saqlangandan keyingi yashil panel (sarlavha, matn, tugmalar va ×). */

@@ -159,6 +159,7 @@ internal fun RowScope.IssuesBatchItem(batch: BatchStock, recommended: Boolean, i
         fontWeight = FontWeight.Medium,
         color = AppColors.Text,
         maxLines = 1,
+        softWrap = false,
         overflow = TextOverflow.Ellipsis,
         modifier = Modifier.weight(1f, fill = false),
     )
@@ -178,7 +179,26 @@ internal fun IssuesRecipientTypeField(value: RecipientType, onChange: (Recipient
     }
 }
 
-/** Tuman: ro‘yxatdan tanlanadi yoki yangi nom yoziladi (saqlanganda servis yaratadi). */
+/** Nofaol tuman nomi yozilganda ko‘rsatiladigan xato (servis ham bunday qatorni rad etadi). */
+internal const val INACTIVE_DISTRICT_ERROR = "Bu tuman nofaol — avval «Tumanlar» sahifasida faollashtiring"
+
+/** Nofaol tumanlar nomlari (berish shakli: bunday nom «yangi tuman» deb ko‘rsatilmaydi). */
+@Composable
+internal fun rememberInactiveDistrictNames(state: AppState): List<String> = remember(state.refreshTick) {
+    state.load(emptyList()) { state.services.directory.districts(includeInactive = true) }.filter { !it.active }.map { it.name }
+}
+
+/** [name] nofaol tumanlardan biriga (nom kaliti bo‘yicha — servisdagidek) mosmi. */
+internal fun issuesIsInactiveDistrict(name: String, inactiveNames: List<String>): Boolean {
+    if (name.isBlank()) return false
+    val key = nameKey(name)
+    return inactiveNames.any { nameKey(it) == key }
+}
+
+/**
+ * Tuman: ro‘yxatdan (faollari) tanlanadi yoki yangi nom yoziladi (saqlanganda servis yaratadi). Nofaol tuman nomi
+ * yozilsa — yangi tuman va’dasi yo‘q: xato chiqadi, «+ yangi tuman» bandi ko‘rsatilmaydi.
+ */
 @Composable
 internal fun IssuesDistrictField(
     value: String,
@@ -187,8 +207,10 @@ internal fun IssuesDistrictField(
     error: String?,
     modifier: Modifier,
     testTag: String,
+    inactiveNames: List<String> = emptyList(),
 ) {
-    val isNew = value.isNotBlank() && comboNewValue(value, districtNames) != null
+    val inactive = issuesIsInactiveDistrict(value, inactiveNames)
+    val isNew = !inactive && value.isNotBlank() && comboNewValue(value, districtNames) != null
     ComboField(
         value = value,
         onValueChange = onChange,
@@ -196,9 +218,9 @@ internal fun IssuesDistrictField(
         label = "Tuman",
         required = true,
         placeholder = "Tanlang yoki yozing",
-        error = error,
+        error = error ?: if (inactive) INACTIVE_DISTRICT_ERROR else null,
         help = if (isNew && error == null) "Yangi tuman qo‘shiladi" else null,
-        allowNew = true,
+        allowNew = !inactive,
         newItemText = { "+ «$it» — yangi tuman" },
         modifier = modifier,
         testTag = testTag,
@@ -338,6 +360,7 @@ internal fun IssuesLineCard(
                             line.clearError("districtId")
                         },
                         districtNames, error = line.errors["districtName"] ?: line.errors["districtId"], modifier = Modifier.weight(1f), testTag = "$tag-district",
+                        inactiveNames = rememberInactiveDistrictNames(state),
                     )
                     RecipientType.WRITE_OFF -> Unit
                 }
@@ -495,7 +518,10 @@ internal fun IssuesFefoSplitDialog(
                 IssuesRecipientTypeField(type, { type = it }, testTag = "split-type")
                 when (type) {
                     RecipientType.DEPARTMENT -> IssuesDepartmentField(state, departmentId, { departmentId = it }, null, Modifier.weight(1f), "split-department")
-                    RecipientType.DISTRICT -> IssuesDistrictField(districtName, { districtName = it }, districtNames, null, Modifier.weight(1f), "split-district")
+                    RecipientType.DISTRICT -> IssuesDistrictField(
+                        districtName, { districtName = it }, districtNames, null, Modifier.weight(1f), "split-district",
+                        inactiveNames = rememberInactiveDistrictNames(state),
+                    )
                     RecipientType.WRITE_OFF -> Unit
                 }
                 if (type != RecipientType.WRITE_OFF) {
@@ -533,6 +559,9 @@ internal fun IssuesFefoSplitDialog(
                                 fontWeight = FontWeight.SemiBold,
                                 color = AppColors.Primary,
                                 textAlign = TextAlign.End,
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.width(140.dp),
                             )
                         }
