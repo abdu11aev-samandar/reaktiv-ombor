@@ -1,7 +1,10 @@
 package uz.reaktivombor.desktop.ui.components
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.HorizontalScrollbar
 import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.TooltipArea
+import androidx.compose.foundation.TooltipPlacement
 import androidx.compose.foundation.VerticalScrollbar
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -83,6 +86,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
@@ -128,6 +132,8 @@ class TableColumn<T>(
     val actions: ((T) -> List<RowAction>)? = null,
     val maxInlineActions: Int = 4,
     val cell: (@Composable (T) -> Unit)? = null,
+    /** Sarlavha ustiga kelganda chiqadigan izoh (ustun nimani ko‘rsatishi); sarlavha yonida ⓘ belgisi. */
+    val headerHint: String? = null,
 ) {
     /** Saralasa bo‘ladimi: ma’lumot ustuni va kaliti (sortKey yoki text) bor. */
     val isSortable: Boolean get() = sortable && kind == ColumnKind.DATA && (sortKey != null || text != null)
@@ -471,6 +477,7 @@ private fun <T> HeaderRow(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun <T> HeaderCell(column: TableColumn<T>, layout: TableLayoutState, tag: String) {
     var menu by remember { mutableStateOf(false) }
@@ -504,17 +511,43 @@ private fun <T> HeaderCell(column: TableColumn<T>, layout: TableLayoutState, tag
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = column.align.arrangement,
         ) {
-            Text(
-                column.title,
-                color = Color.White,
-                fontSize = 12.5.sp,
-                lineHeight = 15.sp,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                textAlign = column.align.textAlign,
-                modifier = Modifier.weight(1f, fill = false),
-            )
+            val hint = column.headerHint
+            if (hint == null) {
+                Text(
+                    column.title,
+                    color = Color.White,
+                    fontSize = 12.5.sp,
+                    lineHeight = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = column.align.textAlign,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+            } else {
+                TooltipArea(
+                    tooltip = { Box(Modifier.width(320.dp)) { TooltipBox(hint) } },
+                    delayMillis = 300,
+                    tooltipPlacement = TooltipPlacement.CursorPoint(offset = DpOffset(0.dp, 16.dp)),
+                    modifier = Modifier.weight(1f, fill = false).testTag("$tag-th-${column.id}-hint"),
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            column.title,
+                            color = Color.White,
+                            fontSize = 12.5.sp,
+                            lineHeight = 15.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            textAlign = column.align.textAlign,
+                            modifier = Modifier.weight(1f, fill = false),
+                        )
+                        Spacer(Modifier.width(3.dp))
+                        Icon(AppIcons.Info, contentDescription = hint, tint = Color.White.copy(alpha = 0.75f), modifier = Modifier.size(13.dp))
+                    }
+                }
+            }
             if (sort != null) {
                 Icon(
                     if (sort.descending) AppIcons.ChevronDown else AppIcons.ChevronUp,

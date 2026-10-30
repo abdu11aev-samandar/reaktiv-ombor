@@ -27,6 +27,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -148,6 +149,10 @@ fun ReportsPage(state: AppState) {
     var filters by remember { mutableStateOf(ReportsPageFilters()) }
     var preview by remember { mutableStateOf<ReportsPreview?>(null) }
     val errors = remember { FormErrors() }
+    // Davr maydonida yozilgan, lekin sana bo‘lmagan matn (masalan, 31.09.2026): hisobot ochiq davr bilan tuzilmasin.
+    var periodTextError by remember { mutableStateOf<String?>(null) }
+    // «Filtrlarni tozalash» — davr maydonlari yangidan tuziladi (noto‘g‘ri yozilgan matn ham o‘chadi).
+    var resetKey by remember { mutableIntStateOf(0) }
 
     val tick = state.refreshTick
     val today = remember(tick) { state.today() }
@@ -157,12 +162,21 @@ fun ReportsPage(state: AppState) {
 
     fun build(): ReportData = ReportBuilder(state.services).build(kind, request, state.today())
 
+    /** Davrda noto‘g‘ri sana yozilgan bo‘lsa — maydon ostida xato, hisobot tuzilmaydi (false). */
+    fun periodOk(): Boolean {
+        if (periodTextError == null || kind.periodLabel == null) return true
+        errors.show(mapOf("from" to "Davr sanasini to‘g‘rilang yoki o‘chiring — noto‘g‘ri sana bilan hisobot tuzilmaydi."))
+        return false
+    }
+
     fun show() {
+        if (!periodOk()) return
         val chosen = kind
         state.run({ build() }, form = errors, refresh = false) { data -> preview = ReportsPreview(chosen, request, data) }
     }
 
     fun save(format: ReportsFileFormat) {
+        if (!periodOk()) return
         val chosen = kind
         reportsExportFile(state, format, form = errors, onBuilt = { preview = ReportsPreview(chosen, request, it) }) { build() }
     }
@@ -197,12 +211,20 @@ fun ReportsPage(state: AppState) {
                     onClear = {
                         change(ReportsPageFilters())
                         errors.clear()
+                        periodTextError = null
+                        resetKey++
                     },
                     onShow = { show() },
                     errors = errors,
                     names = names,
                     districts = districts,
                     today = today,
+                    periodTextError = periodTextError,
+                    onPeriodTextError = { error ->
+                        periodTextError = error
+                        if (error == null) errors.clear("from")
+                    },
+                    resetKey = resetKey,
                 )
                 val shown = preview?.takeIf { it.kind == kind }
                 if (shown == null) {
@@ -290,13 +312,17 @@ private fun ReportFilterCard(
     names: List<String>,
     districts: List<Place>,
     today: LocalDate,
+    periodTextError: String?,
+    onPeriodTextError: (String?) -> Unit,
+    resetKey: Int,
 ) {
     // Maydon xatolari shu yerda o‘qiladi — ular shaklda ko‘rsatilgan deb belgilanadi (pastda takrorlanmaydi).
     val nameError = errors["name"]
     val periodError = if (kind.periodLabel != null) errors["from"] else null
     val departmentError = if (kind.usesDepartment) errors["departmentId"] else null
     val districtError = if (kind.usesDistrict) errors["districtId"] else null
-    val active = filters.activeCount(kind)
+    // Davrda yozilgan noto‘g‘ri matn ham filtr: tozalash tugmasi u bilan yoqiq.
+    val active = filters.activeCount(kind) + if (kind.periodLabel != null && periodTextError != null && filters.from == null && filters.to == null) 1 else 0
     Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(10.dp), color = AppColors.Surface, border = BorderStroke(1.dp, AppColors.Divider)) {
         Column(Modifier.padding(start = 16.dp, end = 12.dp, top = 12.dp, bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -318,14 +344,18 @@ private fun ReportFilterCard(
             FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 kind.periodLabel?.let { label ->
                     Column {
-                        DateRangeField(
-                            filters.from, filters.to,
-                            { f, t ->
-                                onChange(filters.copy(from = f, to = t))
-                                errors.clear("from")
-                            },
-                            label = label, today = today, fieldWidth = 130.dp, testTag = "report-period",
-                        )
+                        key(resetKey) {
+                            DateRangeField(
+                                filters.from, filters.to,
+                                { f, t ->
+                                    onChange(filters.copy(from = f, to = t))
+                                    errors.clear("from")
+                                },
+                                label = label, today = today, fieldWidth = 130.dp,
+                                onErrorChange = onPeriodTextError,
+                                testTag = "report-period",
+                            )
+                        }
                         // Davr xatosini DateRangeField o‘zi ko‘rsatadi; servisniki boshqacha bo‘lsa — ostida.
                         val own = filters.from != null && filters.to != null && filters.from > filters.to
                         if (periodError != null && !own) ReportsFieldError(periodError)
@@ -361,6 +391,7 @@ private fun ReportFilterCard(
                         },
                         placeholder = "Hammasi", allowAdd = false, error = departmentError,
                         modifier = Modifier.width(150.dp), testTag = "report-department",
+                        includeInactive = true,
                     )
                 }
                 if (kind.usesDistrict) {

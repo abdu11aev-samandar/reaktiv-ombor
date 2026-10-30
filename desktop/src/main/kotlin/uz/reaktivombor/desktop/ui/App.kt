@@ -33,6 +33,7 @@ import uz.reaktivombor.desktop.service.NotificationKind
 import uz.reaktivombor.desktop.service.NotificationTarget
 import uz.reaktivombor.desktop.service.Services
 import uz.reaktivombor.desktop.ui.components.Banner
+import uz.reaktivombor.desktop.ui.components.ConfirmDialog
 import uz.reaktivombor.desktop.ui.components.ErrorDialog
 import uz.reaktivombor.desktop.ui.components.TableColumn
 import uz.reaktivombor.desktop.ui.components.TableLayoutState
@@ -188,9 +189,59 @@ class AppState(
 
     val intent: PageIntent? get() = navigation.intent
 
-    /** Sahifaga o‘tish (bir sahifaning o‘ziga ham — u yangidan tuziladi va [intent] ni oladi). */
-    fun navigate(page: Page, intent: PageIntent? = null) {
-        navigation = Navigation(page, intent, navigation.serial + 1)
+    /**
+     * Sahifaga o‘tish (bir sahifaning o‘ziga ham — u yangidan tuziladi va [intent] ni oladi). Joriy sahifa shaklida
+     * saqlanmagan o‘zgarish bo‘lsa ([setLeaveGuard]) — o‘tish [pendingNavigation] ga qo‘yiladi va tasdiq so‘raladi;
+     * [force] — so‘ramasdan o‘tish (foydalanuvchi o‘zi shu o‘tishni tanlagan, masalan, tasdiq oynasida).
+     */
+    fun navigate(page: Page, intent: PageIntent? = null, force: Boolean = false) {
+        val next = Navigation(page, intent, navigation.serial + 1)
+        if (!force && hasUnsavedChanges()) {
+            pendingNavigation = next
+            return
+        }
+        pendingNavigation = null
+        navigation = next
+    }
+
+    // ---------------------------------------------------------------- saqlanmagan o‘zgarishlar
+
+    // Joriy sahifaning «shaklda saqlanmagan narsa bormi» tekshiruvi (bittasi; sahifa almashganda o‘chiriladi).
+    private var leaveGuard: (() -> Boolean)? = null
+
+    /** Tasdiq kutayotgan o‘tish: «Saqlanmagan o‘zgarishlar bor…» oynasi ochiq. */
+    var pendingNavigation: Navigation? by mutableStateOf(null)
+        private set
+
+    /** Sahifa o‘z shaklining tekshiruvini qo‘yadi ([guard] true — saqlanmagan o‘zgarish bor). */
+    fun setLeaveGuard(guard: () -> Boolean) {
+        leaveGuard = guard
+    }
+
+    /** Tekshiruvni olib tashlaydi (faqat o‘sha [guard] hali qo‘yilgan bo‘lsa). */
+    fun clearLeaveGuard(guard: () -> Boolean) {
+        if (leaveGuard === guard) leaveGuard = null
+    }
+
+    /** Joriy sahifa shaklida saqlanmagan o‘zgarish bormi (tekshiruv xato bersa — yo‘q deb olinadi). */
+    fun hasUnsavedChanges(): Boolean = try {
+        leaveGuard?.invoke() == true
+    } catch (e: Throwable) {
+        log.log(Level.WARNING, "leave guard failed", e)
+        false
+    }
+
+    /** «Saqlamasdan chiqish»: kutayotgan o‘tish bajariladi (shakl tashlab yuboriladi). */
+    fun confirmLeave() {
+        val next = pendingNavigation ?: return
+        pendingNavigation = null
+        leaveGuard = null
+        navigation = next.copy(serial = navigation.serial + 1)
+    }
+
+    /** «Sahifada qolish»: o‘tish bekor qilinadi, shakl o‘zgarmaydi. */
+    fun cancelLeave() {
+        pendingNavigation = null
     }
 
     // ---------------------------------------------------------------- yangilanish
@@ -439,6 +490,18 @@ fun ReaktivControlApp(state: AppState) {
                 key(state.navigation.serial) { PageRouter(state) }
                 MessageHost(state, Modifier.align(Alignment.BottomCenter))
             }
+        }
+        state.pendingNavigation?.let { next ->
+            ConfirmDialog(
+                title = "Saqlanmagan o‘zgarishlar bor",
+                message = "Shaklga kiritilgan ma’lumotlar hali saqlanmagan. «${next.page.title}» sahifasiga o‘tilsa, ular yo‘qoladi. " +
+                    "Saqlash uchun «Sahifada qolish» ni bosing.",
+                confirmLabel = "Saqlamasdan chiqish",
+                dismissLabel = "Sahifada qolish",
+                danger = true,
+                onConfirm = { state.confirmLeave() },
+                onDismiss = { state.cancelLeave() },
+            )
         }
         state.unexpectedError?.let { error ->
             ErrorDialog(

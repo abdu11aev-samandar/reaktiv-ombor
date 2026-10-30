@@ -174,6 +174,25 @@ class ReportBuilder(private val services: Services) {
         )
     }
 
+    /**
+     * «Partiyalar bo‘yicha ro‘yxat» (BATCHES) tayyor qatorlardan — masalan, «Barcha reaktivlar» jadvalida ko‘rinib
+     * turganlaridan; [filterLines] — sahifa filtrlari tavsifi (bo‘sh bo‘lsa "Filtr: yo‘q").
+     */
+    @Suppress("UNUSED_PARAMETER")
+    fun buildBatches(rows: List<BatchRow>, filterLines: List<String>, today: LocalDate = services.today()): ReportData {
+        val body = batchesBody(rows)
+        return ReportData(
+            kind = ReportKind.BATCHES,
+            title = ReportKind.BATCHES.title,
+            orgName = services.settings.orgName,
+            generatedAt = LocalDateTime.now(services.clock).truncatedTo(ChronoUnit.SECONDS),
+            filterLines = filterLines.ifEmpty { listOf("Filtr: yo‘q") },
+            columns = body.columns,
+            rows = body.rows,
+            footerLines = body.footer,
+        )
+    }
+
     private class Body(val columns: List<ReportColumn>, val rows: List<ReportRow>, val footer: List<String>)
 
     /** Filtrning shu hisobotga tegishli qismi va tanlangan bo‘lim/tuman. */
@@ -246,8 +265,10 @@ class ReportBuilder(private val services: Services) {
         return Body(columns, out, footer)
     }
 
-    private fun batches(ctx: Context): Body {
-        val rows = batchRows(ctx, BatchFilter(departmentId = ctx.department?.id, receivedFrom = ctx.from, receivedTo = ctx.to))
+    private fun batches(ctx: Context): Body =
+        batchesBody(batchRows(ctx, BatchFilter(departmentId = ctx.department?.id, receivedFrom = ctx.from, receivedTo = ctx.to)))
+
+    private fun batchesBody(rows: List<BatchRow>): Body {
         val columns = listOf(
             col("№", INT, 5), col("Reaktiv nomi", TEXT, 26), col("Seriya raqami", TEXT, 14), col("Ishlab chiqaruvchi", TEXT, 16),
             col("Kelgan sana", DATE, 12), col("Yaroqlilik muddati", DATE, 12), col("Qolgan kunlar", INT, 9),

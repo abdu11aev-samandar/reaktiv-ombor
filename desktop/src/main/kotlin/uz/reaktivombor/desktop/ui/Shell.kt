@@ -239,7 +239,8 @@ private fun NotificationBell(notifications: List<ShellNotification>, count: Int,
                     modifier = Modifier.padding(horizontal = 14.dp, vertical = 14.dp),
                 )
             }
-            notifications.forEachIndexed { index, item ->
+            // Ro‘yxat uzun bo‘lsa (minglab partiya) menyu sekin ochiladi — eng shoshilinchlari ko‘rsatiladi.
+            notifications.take(BELL_MAX_ITEMS).forEachIndexed { index, item ->
                 DropdownMenuItem(
                     text = {
                         Row(verticalAlignment = Alignment.Top) {
@@ -259,9 +260,35 @@ private fun NotificationBell(notifications: List<ShellNotification>, count: Int,
                     contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
                 )
             }
+            val hidden = notifications.drop(BELL_MAX_ITEMS)
+            if (hidden.isNotEmpty()) {
+                // Qolganlari qaysi sahifada ko‘p bo‘lsa — o‘sha sahifaga (muddat nazorati yoki umumiy zaxiralar).
+                val target = hidden.groupingBy { it.page }.eachCount().maxByOrNull { it.value }!!.key
+                HorizontalDivider(color = AppColors.Divider)
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            "Yana ${hidden.size} ta bildirishnoma — «${target.title}» sahifasida",
+                            fontSize = 13.sp,
+                            lineHeight = 17.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = AppColors.Primary,
+                        )
+                    },
+                    onClick = {
+                        open = false
+                        onClick(ShellNotification("", Severity.INFO, target))
+                    },
+                    modifier = Modifier.testTag("notification-more"),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                )
+            }
         }
     }
 }
+
+/** Qo‘ng‘iroqcha ro‘yxatida ko‘rsatiladigan eng ko‘p bildirishnoma (qolgani — «Yana N ta …» bandi). */
+const val BELL_MAX_ITEMS = 30
 
 @Composable
 private fun NavRail(current: Page, onNavigate: (Page) -> Unit) {
@@ -277,7 +304,8 @@ private fun NavRail(current: Page, onNavigate: (Page) -> Unit) {
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             Page.entries.forEach { page ->
-                NavItem(page, page == current) { onNavigate(page) }
+                // Ochiq sahifaning bandi bosilsa — hech narsa qilinmaydi (shakl va filtrlar tozalanib ketmasin).
+                NavItem(page, page == current) { if (page != current) onNavigate(page) }
             }
         }
         VerticalScrollbar(

@@ -6,6 +6,8 @@ import androidx.compose.foundation.TooltipPlacement
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -23,6 +25,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -32,20 +35,20 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.delay
 import uz.reaktivombor.desktop.core.DuplicateBatchError
 import uz.reaktivombor.desktop.core.ExpiryState
 import uz.reaktivombor.desktop.core.MeasureUnit
 import uz.reaktivombor.desktop.core.Qty
 import uz.reaktivombor.desktop.core.UserError
 import uz.reaktivombor.desktop.report.ReportBuilder
-import uz.reaktivombor.desktop.report.ReportFilter
-import uz.reaktivombor.desktop.report.ReportKind
 import uz.reaktivombor.desktop.service.BatchEdit
 import uz.reaktivombor.desktop.service.BatchFilter
 import uz.reaktivombor.desktop.service.BatchRow
 import uz.reaktivombor.desktop.service.MovementKind
 import uz.reaktivombor.desktop.service.OpFilter
 import uz.reaktivombor.desktop.service.Place
+import uz.reaktivombor.desktop.service.PlaceKind
 import uz.reaktivombor.desktop.service.ReagentEdit
 import uz.reaktivombor.desktop.ui.AppIcons
 import uz.reaktivombor.desktop.ui.AppState
@@ -257,14 +260,18 @@ fun ReagentsPage(state: AppState) {
         }
     }
 
-    /** «Eksport»: sahifa filtrlaridan hisobotga o‘tadiganlari bilan «partiyalar bo‘yicha ro‘yxat» (ReportKind.BATCHES). */
+    /**
+     * «Eksport»: jadvalda ko‘rinib turgan partiyalar (hamma filtrlar, holat tugmalari ham qo‘llangan) «partiyalar
+     * bo‘yicha ro‘yxat» (ReportKind.BATCHES) shaklida; fayl boshida — sahifaning barcha faol filtrlari.
+     */
     fun exportBatches(format: ReportsFileFormat) {
-        val mapping = reagentsReportFilter(filters, reagentName)
+        val shown = rows
+        val lines = reagentsFilterLines(state, filters, reagentName, districts, minBase, maxBase)
         reportsExportFile(
             state,
             format,
-            message = { data, file -> reportsSavedText(data, format, file) + ". " + reagentsExportFiltersText(data.filterLines, mapping.skipped) },
-        ) { ReportBuilder(state.services).build(ReportKind.BATCHES, mapping.filter, state.today()) }
+            message = { data, file -> reportsSavedText(data, format, file) + ". " + reagentsExportFiltersText(data.filterLines) },
+        ) { ReportBuilder(state.services).buildBatches(shown, lines, state.today()) }
     }
 
     fun actionsFor(row: BatchRow): List<RowAction> {
@@ -338,44 +345,51 @@ fun ReagentsPage(state: AppState) {
     historyBatch?.let { id -> BatchHistoryDialog(state, id) { historyBatch = null } }
 }
 
-/** Sahifa filtrlari → hisobot filtri ([filter]) va hisobotga o‘tmaydigan filtrlar nomlari ([skipped]). */
-private class ReagentsReportMapping(val filter: ReportFilter, val skipped: List<String>)
-
 /**
- * «Barcha reaktivlar» filtrlari «partiyalar bo‘yicha ro‘yxat» hisobotiga: nom (reaktiv tanlangan bo‘lsa — uning nomi,
- * aks holda qidiruv matni), seriya, bo‘lim va kelgan sana davri. Hisobotda yo‘q filtrlar [ReagentsReportMapping.skipped] ga.
+ * Eksport faylining filtr qatorlari — sahifadagi har bir faol filtr: "Reaktiv: …", "Qidiruv: …", "Seriya: …",
+ * "Bo‘lim: …", "Tumanga berilgan: …", sanalar davri, "Holati: …", "Joriy qoldiq: …", "Mas’ul xodim: …",
+ * "Arxivdagilar ham", "Qoldig‘i yo‘qlar ko‘rsatilmagan". Filtr bo‘lmasa — "Filtr: yo‘q".
  */
-private fun reagentsReportFilter(f: ReagentsPageFilters, reagentName: String?): ReagentsReportMapping {
-    val skipped = mutableListOf<String>()
-    val name = if (f.reagentId != null && reagentName != null) {
-        if (f.text.isNotBlank()) skipped += "qidiruv matni"
-        reagentName
-    } else {
-        f.text.trim().ifEmpty { null }
+private fun reagentsFilterLines(
+    state: AppState,
+    f: ReagentsPageFilters,
+    reagentName: String?,
+    districts: List<Place>,
+    minBase: Long?,
+    maxBase: Long?,
+): List<String> {
+    val lines = mutableListOf<String>()
+    if (f.reagentId != null) lines += "Reaktiv: ${reagentName ?: "—"}"
+    f.text.trim().takeIf { it.isNotEmpty() }?.let { lines += "Qidiruv: $it" }
+    f.series.trim().takeIf { it.isNotEmpty() }?.let { lines += "Seriya: $it" }
+    f.departmentId?.let { id ->
+        val name = state.load(null) { state.services.directory.get(PlaceKind.DEPARTMENT, id)?.name }
+        lines += "Bo‘lim: ${name ?: "—"}"
     }
-    if (f.districtId != null) skipped += "tuman"
-    if (f.states.isNotEmpty()) skipped += "holat"
-    if (f.producedFrom != null || f.producedTo != null) skipped += "ishlab chiqarilgan sana"
-    if (f.expiresFrom != null || f.expiresTo != null) skipped += "yaroqlilik muddati"
-    if (f.remainderMin.isNotBlank() || f.remainderMax.isNotBlank()) skipped += "joriy qoldiq"
-    if (f.responsible.isNotBlank()) skipped += "mas’ul xodim"
-    if (f.includeArchived) skipped += "arxivdagilar (hisobotda faqat arxivlanmaganlar)"
-    if (!f.includeEmpty) skipped += "tugaganlarni yashirish (hisobotda tugaganlari ham bor)"
-    val filter = ReportFilter(
-        from = f.receivedFrom,
-        to = f.receivedTo,
-        name = name,
-        series = f.series.trim().ifEmpty { null },
-        departmentId = f.departmentId,
-    )
-    return ReagentsReportMapping(filter, skipped)
+    f.districtId?.let { id -> lines += "Tumanga berilgan: ${districts.firstOrNull { it.id == id }?.name ?: "—"}" }
+    if (f.producedFrom != null || f.producedTo != null) lines += "Ishlab chiqarilgan sana: " + ReportBuilder.period(f.producedFrom, f.producedTo)
+    if (f.receivedFrom != null || f.receivedTo != null) lines += "Kelgan sana: " + ReportBuilder.period(f.receivedFrom, f.receivedTo)
+    if (f.expiresFrom != null || f.expiresTo != null) lines += "Yaroqlilik muddati: " + ReportBuilder.period(f.expiresFrom, f.expiresTo)
+    if (f.states.isNotEmpty()) lines += "Holati: " + EXPIRY_ORDER.filter { it in f.states }.joinToString(", ") { it.label }
+    if (minBase != null || maxBase != null) {
+        val unit = f.remainderUnit
+        lines += "Joriy qoldiq: " + when {
+            minBase != null && maxBase != null -> "${qtyText(minBase, unit)} — ${qtyText(maxBase, unit)}"
+            minBase != null -> "${qtyText(minBase, unit)} dan"
+            else -> "${qtyText(maxBase!!, unit)} gacha"
+        }
+    }
+    f.responsible.trim().takeIf { it.isNotEmpty() }?.let { lines += "Mas’ul xodim: $it" }
+    if (f.includeArchived) lines += "Arxivdagilar ham"
+    if (!f.includeEmpty) lines += "Qoldig‘i yo‘qlar ko‘rsatilmagan"
+    if (lines.isEmpty()) lines += "Filtr: yo‘q"
+    return lines
 }
 
-/** Xabar uchun: "Qo‘llangan filtrlar: Bo‘lim: Gistologiya; Seriya: ES. Hisobotga o‘tmagan filtrlar: holat." */
-private fun reagentsExportFiltersText(filterLines: List<String>, skipped: List<String>): String {
+/** Xabar uchun: "Qo‘llangan filtrlar: Bo‘lim: Gistologiya; Seriya: ES." yoki "Filtrsiz: …". */
+private fun reagentsExportFiltersText(filterLines: List<String>): String {
     val applied = filterLines.filter { it != "Filtr: yo‘q" }
-    val first = if (applied.isEmpty()) "Filtrsiz: barcha arxivlanmagan partiyalar." else "Qo‘llangan filtrlar: " + applied.joinToString("; ") + "."
-    return first + if (skipped.isEmpty()) "" else " Hisobotga o‘tmagan filtrlar: " + skipped.joinToString(", ") + "."
+    return if (applied.isEmpty()) "Filtrsiz: barcha arxivlanmagan partiyalar." else "Qo‘llangan filtrlar: " + applied.joinToString("; ") + "."
 }
 
 /** Partiyani o‘chirish mumkinmi: yagona operatsiyasi — o‘zining bekor qilinmagan boshlang‘ich kirimi (Reagents.deleteBatch qoidasi). */
@@ -402,15 +416,13 @@ private fun FilterPanel(
     reagentName: String?,
 ) {
     FilterBar(onClear = { onChange(ReagentsPageFilters()) }, activeCount = filters.activeCount) {
-        AppTextField(
-            filters.text, { onChange(filters.copy(text = it)) },
-            label = "Qidirish", placeholder = "Nomi, formula, joyi, izoh…", leadingIcon = AppIcons.Search,
-            modifier = Modifier.width(250.dp), testTag = "filter-text",
-        )
+        // Qidiruv yozilayotganda har harfda emas, to‘xtagandan keyin (~250 ms) so‘raladi — katta bazada qotmasin.
+        DebouncedSearchField(filters.text, { onChange(filters.copy(text = it)) })
         AppTextField(filters.series, { onChange(filters.copy(series = it)) }, label = "Seriya raqami", modifier = Modifier.width(140.dp), testTag = "filter-series")
         DepartmentSelect(
             state, filters.departmentId, { onChange(filters.copy(departmentId = it)) },
             placeholder = "Hammasi", allowAdd = false, modifier = Modifier.width(170.dp), testTag = "filter-department",
+            includeInactive = true,
         )
         Box(Modifier.padding(top = 20.dp)) {
             AppButton(
@@ -470,33 +482,74 @@ private fun FilterPanel(
     }
 }
 
-/** Holat tugmalari (chapda, sig‘masa o‘raladi) va «Tugagan partiyalar» / «Arxivdagilar» belgilari (o‘ngda). */
+/** Qidiruv maydoni: matn darhol ko‘rinadi, filtrga esa yozish to‘xtagach [SEARCH_DEBOUNCE_MILLIS] dan keyin o‘tadi. */
+@Composable
+private fun DebouncedSearchField(value: String, onCommit: (String) -> Unit) {
+    var text by remember { mutableStateOf(value) }
+    // Oxirgi yuborilgan matn: qiymat shundan farq qilsa — u tashqaridan o‘zgargan (masalan, «Filtrlarni tozalash»).
+    var sent by remember { mutableStateOf(value) }
+    val commit by rememberUpdatedState(onCommit)
+    fun send() {
+        if (text == sent) return
+        sent = text
+        commit(text)
+    }
+    LaunchedEffect(value) {
+        if (value != sent) {
+            sent = value
+            text = value
+        }
+    }
+    LaunchedEffect(text) {
+        if (text == sent) return@LaunchedEffect
+        delay(SEARCH_DEBOUNCE_MILLIS)
+        send()
+    }
+    AppTextField(
+        text, { text = it },
+        label = "Qidirish", placeholder = "Nomi, formula, joyi, izoh…", leadingIcon = AppIcons.Search,
+        onEnter = { send() },
+        modifier = Modifier.width(250.dp), testTag = "filter-text",
+    )
+}
+
+/** Qidiruv yozilgach jadval shuncha kutib yangilanadi. */
+internal const val SEARCH_DEBOUNCE_MILLIS = 250L
+
+/** Holat tugmalari (chapda, sig‘masa o‘raladi) va «Qoldig‘i yo‘qlar ham» / «Arxivdagilar» belgilari (o‘ngda). */
 @Composable
 private fun StateRow(filters: ReagentsPageFilters, onChange: (ReagentsPageFilters) -> Unit, counts: Map<ExpiryState, Int>) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         ExpiryStateFilter(filters.states, { onChange(filters.copy(states = it)) }, counts = counts, modifier = Modifier.weight(1f))
         Spacer(Modifier.width(8.dp))
-        CheckField(filters.includeEmpty, { onChange(filters.copy(includeEmpty = it)) }, "Tugagan partiyalar", topPadding = 0.dp, testTag = "filter-empty")
+        CheckField(filters.includeEmpty, { onChange(filters.copy(includeEmpty = it)) }, "Qoldig‘i yo‘qlar ham", topPadding = 0.dp, testTag = "filter-empty")
         CheckField(filters.includeArchived, { onChange(filters.copy(includeArchived = it)) }, "Arxivdagilar", topPadding = 0.dp, testTag = "filter-archived")
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun GroupHeader(info: GroupInfo<BatchRow>) {
     val rows = info.rows
     val first = rows.first()
     val totals = rows.distinctBy { it.dimension }.sortedBy { it.dimension.ordinal }.joinToString(" · ") { qtyText(it.groupTotal, it.groupUnit) }
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text(first.name, fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold, color = AppColors.Text, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        if (first.formula.isNotBlank()) Text(first.formula, fontSize = 12.5.sp, color = AppColors.Muted, maxLines = 1)
-        Text("${rows.size} ta partiya", fontSize = 12.5.sp, color = AppColors.Muted, maxLines = 1)
-        Text("Umumiy qoldiq: $totals", fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, color = AppColors.Navy, maxLines = 1)
+    // Sig‘masa keyingi qatorga o‘raladi: holat belgilari va «Minimal qoldiqdan kam» uzun nomda ham ko‘rinib tursin.
+    FlowRow(
+        Modifier.padding(vertical = 3.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        val center = Modifier.align(Alignment.CenterVertically)
+        Text(first.name, center, fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold, color = AppColors.Text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        if (first.formula.isNotBlank()) Text(first.formula, center, fontSize = 12.5.sp, color = AppColors.Muted, maxLines = 1)
+        Text("${rows.size} ta partiya", center, fontSize = 12.5.sp, color = AppColors.Muted, maxLines = 1)
+        Text("Umumiy qoldiq: $totals", center, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, color = AppColors.Navy, maxLines = 1)
         EXPIRY_ORDER.forEach { s ->
             val count = rows.count { it.state == s }
-            if (count > 0) ExpiryChip(s, text = "${s.label}: $count")
+            if (count > 0) ExpiryChip(s, center, text = "${s.label}: $count")
         }
-        if (rows.any { it.belowMin }) StatusChip("Minimal qoldiqdan kam", StatusStyles.RED.background, StatusStyles.RED.foreground, dot = null)
-        if (rows.any { it.reagentArchived }) StatusChip("Reaktiv arxivda", AppColors.Background, AppColors.Muted, dot = null)
+        if (rows.any { it.belowMin }) StatusChip("Minimal qoldiqdan kam", StatusStyles.RED.background, StatusStyles.RED.foreground, center, dot = null)
+        if (rows.any { it.reagentArchived }) StatusChip("Reaktiv arxivda", AppColors.Background, AppColors.Muted, center, dot = null)
     }
 }
 
@@ -527,17 +580,21 @@ private fun reagentColumns(actions: (BatchRow) -> List<RowAction>): List<TableCo
         id = "issued", title = "Jami berilgan miqdor", width = 116.dp, align = ColumnAlign.END, sortKey = { it.issuedQty },
         text = { qtyNumber(it.issuedQty, it.unit) },
         cell = { row -> IssuedCell(row) },
+        headerHint = ISSUED_HINT,
     ),
     TableColumn(
         id = "remainder", title = "Joriy qoldiq", width = 104.dp, align = ColumnAlign.END, sortKey = { it.remainder },
         text = { qtyNumber(it.remainder, it.unit) },
         cell = { row ->
+            // Raqam minglik bo‘shlig‘ida bo‘linib, qolgani yashirinmasin: sig‘masa «…» bilan.
             Text(
                 qtyNumber(row.remainder, row.unit),
                 fontSize = 13.sp,
                 fontWeight = FontWeight.SemiBold,
                 color = if (row.remainder == 0L) AppColors.Muted else AppColors.Text,
                 maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis,
             )
         },
     ),
@@ -547,14 +604,26 @@ private fun reagentColumns(actions: (BatchRow) -> List<RowAction>): List<TableCo
     actionsColumn(width = 170.dp, maxInline = 5, actions = actions),
 )
 
-/** Berilgan miqdor; hisobdan chiqarilgani bo‘lsa — yonida belgi va izoh (kelgan − berilgan − chiqarilgan = qoldiq). */
+/** «Jami berilgan miqdor» sarlavhasi izohi: qiymat sof — bo‘lim va tumanlardan qaytarilganlar ayirilgan. */
+private const val ISSUED_HINT = "Bo‘lim va tumanlarga berilgan miqdor, qaytarilganlar ayirilgan (sof berilgan). " +
+    "Hisobdan chiqarilgani bunga kirmaydi — u ⓘ belgisi izohida. Kelgan − berilgan − chiqarilgan = joriy qoldiq."
+
+/**
+ * Berilgan miqdor (qaytarilganlar ayirilgan); hisobdan chiqarilgani bo‘lsa — yonida belgi va izoh
+ * (kelgan − berilgan − chiqarilgan = qoldiq).
+ */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun IssuedCell(row: BatchRow) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         if (row.writtenOffQty > 0) {
             TooltipArea(
-                tooltip = { TooltipBox("Bundan tashqari hisobdan chiqarilgan: ${qtyText(row.writtenOffQty, row.unit)}") },
+                tooltip = {
+                    TooltipBox(
+                        "Berilgan (qaytarilganlar ayirilgan): ${qtyText(row.issuedQty, row.unit)}. " +
+                            "Bundan tashqari hisobdan chiqarilgan: ${qtyText(row.writtenOffQty, row.unit)}",
+                    )
+                },
                 delayMillis = 300,
                 tooltipPlacement = TooltipPlacement.CursorPoint(offset = DpOffset(0.dp, 16.dp)),
             ) {
@@ -562,7 +631,7 @@ private fun IssuedCell(row: BatchRow) {
             }
             Spacer(Modifier.width(4.dp))
         }
-        Text(qtyNumber(row.issuedQty, row.unit), fontSize = 13.sp, color = AppColors.Text, maxLines = 1)
+        Text(qtyNumber(row.issuedQty, row.unit), fontSize = 13.sp, color = AppColors.Text, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
     }
 }
 

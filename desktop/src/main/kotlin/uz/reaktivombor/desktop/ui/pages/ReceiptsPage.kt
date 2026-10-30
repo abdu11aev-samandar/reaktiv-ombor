@@ -191,6 +191,8 @@ fun ReceiptsPage(state: AppState) {
         )
     }
     val form = remember { ReceiptsPageForm(today, actor).also { f -> intentTarget?.second?.let { f.select(it) } } }
+    // Saqlanmagan kirim bilan boshqa sahifaga o‘tilsa — tasdiq so‘raladi (Common.kt, rememberLeaveGuard).
+    rememberLeaveGuard(state) { listOf(form.query, form.qty, form.storage, form.docNo, form.note).takeIf { v -> v.any { it.isNotBlank() } } }
     val errors = remember { FormErrors() }
     val confirm = rememberConfirmState()
     val reasons = rememberOpsReasonState()

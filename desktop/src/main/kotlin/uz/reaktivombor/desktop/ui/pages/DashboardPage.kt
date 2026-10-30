@@ -46,12 +46,12 @@ import uz.reaktivombor.desktop.ui.PageIntent
 import uz.reaktivombor.desktop.ui.UzDates
 import uz.reaktivombor.desktop.ui.components.AppButton
 import uz.reaktivombor.desktop.ui.components.Banner
-import uz.reaktivombor.desktop.ui.components.BarChart
 import uz.reaktivombor.desktop.ui.components.ButtonKind
 import uz.reaktivombor.desktop.ui.components.ChartBar
 import uz.reaktivombor.desktop.ui.components.ChartSegment
 import uz.reaktivombor.desktop.ui.components.DonutChart
 import uz.reaktivombor.desktop.ui.components.EmptyState
+import uz.reaktivombor.desktop.ui.components.FittedBarChart
 import uz.reaktivombor.desktop.ui.components.FormSection
 import uz.reaktivombor.desktop.ui.components.StatCard
 import uz.reaktivombor.desktop.ui.components.StatCardRow
@@ -161,7 +161,8 @@ private fun StateDonut(state: AppState, data: Dashboard, modifier: Modifier) {
         }
         DonutChart(
             segments = segments,
-            size = 112.dp,
+            // 1280×720 da ham izoh (5 qator) halqa yonida qolsin (Charts.kt, LegendMinWidth).
+            size = 100.dp,
             thickness = 18.dp,
             centerValue = data.activeBatches.toString(),
             centerLabel = "partiya",
@@ -212,13 +213,20 @@ private fun DepartmentChart(state: AppState, data: Dashboard, modifier: Modifier
         if (dimension == null) {
             NoChartData(if (metric == DashboardDeptMetric.REMAINDER) "Bo‘limlarga biriktirilgan qoldiq yo‘q" else "Bo‘limlarga hali reaktiv berilmagan")
         } else {
-            BarChart(
-                bars = data.byDepartment.map { bar(it.name, (if (metric == DashboardDeptMetric.REMAINDER) it.remainder else it.issuedTo)[dimension] ?: 0L, dimension) },
+            // Kattasidan kichigiga, 0 lari tushiriladi; sig‘maganlari — «Yana N ta — hammasi» (Bo‘limlar sahifasi).
+            val values = data.byDepartment
+                .map { it to ((if (metric == DashboardDeptMetric.REMAINDER) it.remainder else it.issuedTo)[dimension] ?: 0L) }
+                .filter { it.second != 0L }
+                .sortedByDescending { it.second }
+            FittedBarChart(
+                bars = values.map { (d, v) -> bar(d.name, v, dimension) },
+                modifier = Modifier.fillMaxWidth().weight(1f),
                 labelWidth = 92.dp,
                 valueWidth = 72.dp,
                 onBarClick = { b ->
                     data.byDepartment.firstOrNull { it.name == b.label }?.let { state.navigate(Page.DEPARTMENTS, PageIntent.DepartmentOf(it.departmentId)) }
                 },
+                onMore = { state.navigate(Page.DEPARTMENTS) },
                 testTag = "dept-chart",
             )
         }
@@ -241,15 +249,16 @@ private fun DistrictChart(state: AppState, data: Dashboard, modifier: Modifier) 
             val bars = data.byDistrict
                 .filter { (it.issued[dimension] ?: 0L) != 0L }
                 .sortedByDescending { it.issued[dimension] ?: 0L }
-                .take(8)
-            BarChart(
+            FittedBarChart(
                 bars = bars.map { bar(it.name, it.issued[dimension] ?: 0L, dimension) },
+                modifier = Modifier.fillMaxWidth().weight(1f),
                 color = AppColors.Navy,
                 labelWidth = 92.dp,
                 valueWidth = 72.dp,
                 onBarClick = { b ->
                     data.byDistrict.firstOrNull { it.name == b.label }?.let { state.navigate(Page.DISTRICTS, PageIntent.DistrictOf(it.districtId)) }
                 },
+                onMore = { state.navigate(Page.DISTRICTS) },
                 testTag = "district-chart",
             )
         }

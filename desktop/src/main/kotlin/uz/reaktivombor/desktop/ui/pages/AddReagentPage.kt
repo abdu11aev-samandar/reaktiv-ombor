@@ -81,26 +81,56 @@ private class AddReagentForm(private val today: LocalDate, private val receiver:
     var receivedBy by mutableStateOf(receiver)
     var minStock by mutableStateOf("")
     var minUnit by mutableStateOf<MeasureUnit?>(null)
+
+    // «Minimal qoldiq» ni foydalanuvchi o‘zi o‘zgartirdimi (mavjud reaktivdan oldindan to‘ldirilgani hisob emas).
+    var minTouched by mutableStateOf(false)
     var note by mutableStateOf("")
 
-    fun toInput() = NewBatch(
-        name = name,
-        formula = formula,
-        manufacturer = manufacturer,
-        series = series,
-        producedOn = producedOn,
-        receivedOn = receivedOn,
-        initialQtyText = qty,
-        unit = unit,
-        expiresOn = expiresOn,
-        departmentId = departmentId,
-        storageLocation = storage,
-        responsible = responsible,
-        minStockText = minStock.ifBlank { null },
-        minStockUnit = if (minStock.isBlank()) null else minUnit ?: unit,
-        note = note,
-        receivedBy = receivedBy,
+    /** Saqlanmagan o‘zgarishni aniqlash uchun hamma maydonlar. */
+    fun snapshot(): List<Any?> = listOf(
+        name, formula, manufacturer, series, producedOn, receivedOn, qty, unit, expiresOn, departmentId, storage,
+        responsible, receivedBy, minStock, minUnit, note,
     )
+
+    /**
+     * [existingReagent] — shu nomli reaktiv bor: uning minimal qoldig‘i faqat foydalanuvchi maydonni o‘zgartirgan
+     * bo‘lsa yuboriladi (oldindan to‘ldirilgan qiymat boshqa birlikda qayta yozilib ketmasin).
+     */
+    fun toInput(existingReagent: Boolean = false): NewBatch {
+        val sendMin = minStock.isNotBlank() && (minTouched || !existingReagent)
+        return NewBatch(
+            name = name,
+            formula = formula,
+            manufacturer = manufacturer,
+            series = series,
+            producedOn = producedOn,
+            receivedOn = receivedOn,
+            initialQtyText = qty,
+            unit = unit,
+            expiresOn = expiresOn,
+            departmentId = departmentId,
+            storageLocation = storage,
+            responsible = responsible,
+            minStockText = if (sendMin) minStock else null,
+            minStockUnit = if (sendMin) minUnit ?: unit else null,
+            note = note,
+            receivedBy = receivedBy,
+        )
+    }
+
+    /** Partiya birligi o‘zgardi: o‘lchov turi boshqa bo‘lsa minimal qoldiq tozalanadi (5 l → 5 kg bo‘lib qolmasin). */
+    fun changeUnit(next: MeasureUnit?) {
+        // Minimal qoldiq maydoni hozir qaysi birlikda ko‘rsatilyapti (o‘zi tanlanmagan bo‘lsa — partiyaniki).
+        val shownIn = minUnit ?: unit
+        unit = next
+        if (shownIn?.dimension != next?.dimension) {
+            if (shownIn != null) {
+                minStock = ""
+                minTouched = false
+            }
+            minUnit = next
+        }
+    }
 
     /** Keyingi partiya uchun: reaktiv va partiya maydonlari tozalanadi, sana / bo‘lim / joy / xodimlar qoladi. */
     fun resetForNext() {
@@ -114,6 +144,7 @@ private class AddReagentForm(private val today: LocalDate, private val receiver:
         expiresOn = null
         minStock = ""
         minUnit = null
+        minTouched = false
         note = ""
     }
 
@@ -141,6 +172,8 @@ fun AddReagentPage(state: AppState) {
     val today = remember { state.today() }
     val actor = remember { state.load("") { state.services.settings.actorName } }
     val form = remember { AddReagentForm(today, actor) }
+    // Saqlanmagan ma’lumot bilan boshqa sahifaga o‘tilsa — App.kt tasdiq so‘raydi.
+    val unsaved = rememberLeaveGuard(state) { form.snapshot() }
     val errors = remember { FormErrors() }
     val confirm = rememberConfirmState()
     var saved by remember { mutableStateOf<AddReagentSaved?>(null) }
@@ -158,14 +191,18 @@ fun AddReagentPage(state: AppState) {
     fun pickName(picked: String) {
         val reagent = allReagents.firstOrNull { nameKey(it.name) == nameKey(picked) } ?: return
         if (form.formula.isBlank()) form.formula = reagent.formula
-        if (form.minStock.isBlank() && reagent.minStock != null && reagent.minStockUnit != null) {
-            form.minStock = Qty.format(reagent.minStock, reagent.minStockUnit)
-            form.minUnit = reagent.minStockUnit
+        val min = reagent.minStock
+        val minUnit = reagent.minStockUnit
+        // Faqat partiya birligi bilan bir o‘lchov turida bo‘lsa (yoki birlik hali tanlanmagan) — ko‘rsatish uchun.
+        if (form.minStock.isBlank() && min != null && minUnit != null && (form.unit == null || form.unit?.dimension == minUnit.dimension)) {
+            form.minStock = Qty.format(min, minUnit)
+            form.minUnit = minUnit
+            form.minTouched = false
         }
     }
 
     fun save(confirmDuplicate: Boolean = false) {
-        val input = form.toInput()
+        val input = form.toInput(existingReagent = existing != null)
         state.run(
             { state.services.reagents.createBatch(input, confirmDuplicate) },
             form = errors,
@@ -177,7 +214,7 @@ fun AddReagentPage(state: AppState) {
                             message = e.message,
                             confirmLabel = "Mavjud partiyaga qo‘shimcha kirim",
                             dismissLabel = "Orqaga",
-                        ) { state.navigate(Page.RECEIPTS, PageIntent.ReceiptFor(e.existingBatchId)) }
+                        ) { state.navigate(Page.RECEIPTS, PageIntent.ReceiptFor(e.existingBatchId), force = true) }
                         true
                     }
                     e is DuplicateBatchError -> {
@@ -203,6 +240,7 @@ fun AddReagentPage(state: AppState) {
                     (input.expiresOn?.let { ", muddati ${dateText(it)}" } ?: "") + ".",
             )
             form.resetForNext()
+            unsaved.markClean()
             generation++
         }
     }
@@ -280,9 +318,7 @@ fun AddReagentPage(state: AppState) {
                         onAmountChange = { form.qty = it; errors.clear("initialQtyText") },
                         unit = form.unit?.code,
                         onUnitChange = { code ->
-                            val unit = MeasureUnit.of(code)
-                            form.unit = unit
-                            if (form.minUnit?.dimension != unit?.dimension) form.minUnit = unit
+                            form.changeUnit(MeasureUnit.of(code))
                             errors.clear("unit")
                         },
                         units = unitCodes,
@@ -296,9 +332,16 @@ fun AddReagentPage(state: AppState) {
                     AppTextField(form.receivedBy, { form.receivedBy = it; errors.clear("receivedBy") }, label = "Qabul qilgan xodim", error = errors["receivedBy"], modifier = Modifier.weight(1f), testTag = "add-receiver")
                     QtyField(
                         amount = form.minStock,
-                        onAmountChange = { form.minStock = it; errors.clear("minStockText") },
+                        onAmountChange = {
+                            form.minStock = it
+                            form.minTouched = true
+                            errors.clear("minStockText")
+                        },
                         unit = (form.minUnit ?: form.unit)?.code,
-                        onUnitChange = { code -> form.minUnit = MeasureUnit.of(code) },
+                        onUnitChange = { code ->
+                            form.minUnit = MeasureUnit.of(code)
+                            form.minTouched = true
+                        },
                         units = minUnits.map { it.code },
                         label = "Minimal qoldiq",
                         error = errors["minStockText"],
@@ -332,6 +375,7 @@ fun AddReagentPage(state: AppState) {
                 "Tozalash",
                 onClick = {
                     form.clearAll()
+                    unsaved.markClean()
                     errors.clear()
                     saved = null
                     generation++
