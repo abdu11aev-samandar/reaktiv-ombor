@@ -177,17 +177,24 @@ class MainStartupTest {
         assertTrue(text, text.lines().first { it.startsWith("FAIL ") }.contains("[NativeLibraryNotFoundException]"))
     }
 
+    /** Chiqish matni faqat xabar uchun: noto‘g‘ri baytlar istisno emas, almashtirish belgisi bo‘lib qoladi. */
+    private fun readLenient(file: Path): String = String(Files.readAllBytes(file), StandardCharsets.UTF_8)
+
     private fun runMainInNewJvm(dataDir: Path, vararg jvmArgs: String, args: List<String> = emptyList()): Pair<Int, String> {
         val java = Paths.get(System.getProperty("java.home"), "bin", "java").toString()
         val outFile = tmp.root.toPath().resolve("jvm-${System.nanoTime()}.txt")
-        val command = listOf(java, "-cp", System.getProperty("java.class.path"), "-Djava.awt.headless=true", "-D${DataDir.PROPERTY}=$dataDir") +
+        // Konsol chiqishi UTF-8 bo‘lsin (Windows’da standart — Cp1251/Cp1252, o‘zbekcha ‘ belgisi buzilardi).
+        val command = listOf(
+            java, "-cp", System.getProperty("java.class.path"), "-Djava.awt.headless=true", "-Dfile.encoding=UTF-8",
+            "-Dstdout.encoding=UTF-8", "-Dstderr.encoding=UTF-8", "-D${DataDir.PROPERTY}=$dataDir",
+        ) +
             jvmArgs + "uz.reaktivombor.desktop.MainKt" + args
         val process = ProcessBuilder(command).redirectErrorStream(true).redirectOutput(outFile.toFile()).start()
         if (!process.waitFor(90, TimeUnit.SECONDS)) {
             process.destroyForcibly()
-            throw AssertionError("main() 90 s ichida tugamadi: " + Files.readString(outFile))
+            throw AssertionError("main() 90 s ichida tugamadi: " + readLenient(outFile))
         }
-        return process.exitValue() to Files.readString(outFile)
+        return process.exitValue() to readLenient(outFile)
     }
 
     // ---------------------------------------------------------------- eski jadval xabari (#36)

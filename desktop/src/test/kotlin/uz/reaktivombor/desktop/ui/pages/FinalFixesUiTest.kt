@@ -136,8 +136,8 @@ class FinalFixesUiTest {
         val group = hasAnyAncestor(hasTestTag("reagents-group-$reagentId"))
         listOf("Umumiy qoldiq:", "Muddati o‘tgan: 1", "1 oy yoki kam qoldi: 1", "1–3 oy qoldi: 1", "Yaroqli: 1", "Minimal qoldiqdan kam").forEach { text ->
             val node = onNode(hasText(text, substring = true) and group, useUnmergedTree = true).assertIsDisplayed().fetchSemanticsNode()
-            // Kesilgan belgi nuqtagacha qisqaradi; to‘liq belgi har harfga kamida ~5 px oladi.
-            assertTrue("$text: eni ${node.size.width}", node.size.width >= text.length * 5)
+            // Kesilgan belgi nuqtagacha qisqaradi; to‘liq belgi har harfga kamida ~4 px oladi (Windows shrifti Linux’dagidan ingichka).
+            assertTrue("$text: eni ${node.size.width}", node.size.width >= text.length * 4)
             assertTrue("$text o‘ngdan chiqib ketgan", node.boundsInRoot.right <= width)
         }
     }
@@ -532,7 +532,7 @@ class FinalFixesUiTest {
         val summary = hasAnyAncestor(hasTestTag("ledger-summary"))
         listOf("Harakatlar", "Joriy qoldiq", "4 l").forEach { text ->
             val node = onNode(hasText(text, substring = true) and summary).assertIsDisplayed().fetchSemanticsNode()
-            assertTrue("$text: eni ${node.size.width}", node.size.width >= text.length * 5)
+            assertTrue("$text: eni ${node.size.width}", node.size.width >= text.length * 4)
         }
     }
 }
