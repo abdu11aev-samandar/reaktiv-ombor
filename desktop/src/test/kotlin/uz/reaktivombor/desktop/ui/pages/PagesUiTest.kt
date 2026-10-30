@@ -216,7 +216,15 @@ class PagesUiTest {
 
     @Test
     fun archiveHidesTheBatchAndArchivedFilterShowsIt() = runDesktopComposeUiTest(1366, 768) {
-        app(Page.REAGENTS)
+        val state = app(Page.REAGENTS)
+        // Qoldig‘i bor partiya arxivlanmaydi: tasdiq so‘ralmaydi, nima qilish kerakligi aytiladi, hech narsa o‘zgarmaydi.
+        selectAndAct(ids.eo77, "Arxivlash")
+        onNodeWithText("Arxivlab bo‘lmaydi").assertExists()
+        assertFalse(services.reagents.batch(ids.eo77)!!.archived)
+        // Qoldiq nolga tushirilgach (hisobdan chiqarish) arxivlanadi.
+        services.stock.writeOff(ids.eo77, today, "250", MeasureUnit.ML, "Idish singan")
+        state.refresh()
+        waitForIdle()
         selectAndAct(ids.eo77, "Arxivlash")
         dialogButton("Arxivlash").performClick()
         waitForIdle()

@@ -221,14 +221,18 @@ private fun actionsFor(
 }
 
 private fun askArchive(state: AppState, row: BatchRow, confirm: ConfirmState) {
-    val stockNote = if (row.remainder > 0) {
-        " Omborda qoldig‘i bor: ${qtyText(row.remainder, row.unit)} — arxivlash qoldiqni hisobdan chiqarmaydi; kerak bo‘lsa avval «Hisobdan chiqarish»ni bajaring."
-    } else {
-        ""
+    // Qoldig‘i bor partiya arxivlanmaydi (qoldiq umumiy hisobdan tushib qolardi): avval «Hisobdan chiqarish».
+    if (row.remainder > 0) {
+        state.warning(
+            "${batchQuote(row.name, row.series)} partiyasida ${qtyText(row.remainder, row.unit)} qoldiq bor. Arxivlashdan oldin uni " +
+                "hisobdan chiqaring («Hisobdan chiqarish») yoki bering — qoldiq nolga tushgach arxivlash mumkin.",
+            title = "Arxivlab bo‘lmaydi",
+        )
+        return
     }
     confirm.ask(
         title = "Partiyani arxivlash",
-        message = "${batchQuote(row.name, row.series)} arxivga o‘tkaziladi va ro‘yxatlardan yashiriladi.$stockNote " +
+        message = "${batchQuote(row.name, row.series)} arxivga o‘tkaziladi va ro‘yxatlardan yashiriladi. " +
             "Arxivdagi partiyadan berish va kirim qilinmaydi; tarix va hisobotlar saqlanadi.",
         confirmLabel = "Arxivlash",
     ) {

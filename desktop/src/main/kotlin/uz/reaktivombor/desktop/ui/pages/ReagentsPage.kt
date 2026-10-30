@@ -194,11 +194,22 @@ fun ReagentsPage(state: AppState) {
         filters.reagentId?.let { id -> state.load(null) { state.services.reagents.get(id)?.name } }
     }
 
+    /** Qoldig‘i bor partiya arxivlanmaydi (arxivga o‘tgan qoldiq jami hisobdan tushib qolardi): avval nolga tushiriladi. */
+    fun stockBlocksArchive(row: BatchRow): Boolean {
+        if (row.remainder <= 0) return false
+        state.warning(
+            "${batchQuote(row.name, row.series)} partiyasida ${qtyText(row.remainder, row.unit)} qoldiq bor. Arxivlashdan oldin uni nolga " +
+                "tushiring: berish («Sarf va berish») yoki yaroqsiz bo‘lsa «Hisobdan chiqarish» («Yaroqlilik muddati nazorati» sahifasida).",
+            title = "Arxivlab bo‘lmaydi",
+        )
+        return true
+    }
+
     fun archive(row: BatchRow) {
-        val remainderNote = if (row.remainder > 0) " Qoldig‘i bor: ${qtyText(row.remainder, row.unit)}." else ""
+        if (stockBlocksArchive(row)) return
         confirm.ask(
             title = "Partiyani arxivlash",
-            message = "${batchQuote(row.name, row.series)} arxivga o‘tkaziladi.$remainderNote Arxivdagi partiyadan kirim va berish " +
+            message = "${batchQuote(row.name, row.series)} arxivga o‘tkaziladi. Arxivdagi partiyadan kirim va berish " +
                 "qilinmaydi, tarixi va hisobotlardagi o‘rni saqlanadi. «Arxivdagilar» belgilansa ro‘yxatda ko‘rinadi.",
             confirmLabel = "Arxivlash",
         ) {
@@ -222,6 +233,18 @@ fun ReagentsPage(state: AppState) {
     fun offerArchive(row: BatchRow, reason: String) {
         if (row.archived) {
             state.warning("$reason Partiya allaqachon arxivda.")
+            return
+        }
+        if (row.remainder > 0) {
+            // Arxivlashga ham qoldiq to‘sqinlik qiladi: tushuntiramiz va qoldiqni nolga tushiradigan sahifaga o‘tishni taklif qilamiz.
+            confirm.ask(
+                title = "O‘chirib bo‘lmaydi",
+                message = "$reason\n\nPartiyada ${qtyText(row.remainder, row.unit)} qoldiq bor, shuning uchun uni arxivlab ham bo‘lmaydi. " +
+                    "Avval qoldiqni nolga tushiring: berish («Sarf va berish») yoki yaroqsiz bo‘lsa «Hisobdan chiqarish».",
+                confirmLabel = "Hisobdan chiqarishga o‘tish",
+            ) {
+                state.navigate(Page.EXPIRY, PageIntent.FilterExpiry(ExpiryState.entries.toSet(), row.batchId))
+            }
             return
         }
         confirm.ask(

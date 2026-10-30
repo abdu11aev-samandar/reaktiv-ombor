@@ -182,12 +182,16 @@ class PlacesPagesUiTest {
         assertEquals(listOf("department-history-row-r$returnId", "department-history-row-i${ids.gistologiyaIssueItem}"), rowTags("department-history-row-"))
         assertIn("department-history-row-r$returnId", "Qaytarildi")
 
-        // Davr: 01.04.2026 dan — 10.03 dagi berish kirmaydi, bo‘limdagi partiyalar (bugungi holat) o‘zgarmaydi.
+        // Davr: 01.04.2026 dan — 10.03 dagi berish kirmaydi (bo‘limdagi partiyalar — bugungi holat — o‘zgarmaydi), lekin davrdagi
+        // qaytarish (0,5 l) «Davr uchun harakat» hisobotidagi kabi sof berilganni kamaytiradi.
         onNodeWithTag("department-period-from").performTextInput("01.04.2026")
         waitForIdle()
         assertIn("department-card-issued-to", "sof · 0 ta berish")
         assertIn("department-card-remainder", "9,25 l")
-        assertTrue(services.queries.departmentSummary(gistologiya.id, LocalDate.of(2026, 4, 1), null, today).issuedTo.isEmpty())
+        val inPeriod = services.queries.departmentSummary(gistologiya.id, LocalDate.of(2026, 4, 1), null, today)
+        assertEquals(listOf(0), inPeriod.issuedTo.map { it.items })
+        assertEquals(listOf(-500_000L), inPeriod.issuedTo.map { it.net })
+        assertEquals(1, inPeriod.earlierReturns.size)
         assertEquals(listOf("department-history-row-r$returnId"), rowTags("department-history-row-"))
 
         // Boshqa bo‘lim: hajm va massa alohida qatorlarda, qo‘shilmaydi.
@@ -456,7 +460,18 @@ class PlacesPagesUiTest {
 
     @Test
     fun archiveFromTheExpiryPageNeedsConfirmation() = runDesktopComposeUiTest(1366, 768) {
-        app(Page.EXPIRY)
+        val state = app(Page.EXPIRY)
+        // Qoldig‘i bor partiya arxivlanmaydi: tasdiq o‘rniga nima qilish kerakligi aytiladi, hech narsa o‘zgarmaydi.
+        onNodeWithTag("expiry-row-${ids.eo77}").performClick()
+        onNode(hasText("Arxivlash") and hasAnyAncestor(hasTestTag("expiry-actions"))).performClick()
+        onNodeWithText("Arxivlab bo‘lmaydi").assertExists()
+        onNodeWithText("Partiyani arxivlash").assertDoesNotExist()
+        assertFalse(services.reagents.batch(ids.eo77)!!.archived)
+        // Qoldiq hisobdan chiqarilgach (nol qoldiq) arxivlash tasdiq bilan bajariladi.
+        services.stock.writeOff(ids.eo77, today, "250", MeasureUnit.ML, "Idish singan")
+        state.refresh()
+        waitForIdle()
+        onNodeWithTag("expiry-empty").performClick()
         onNodeWithTag("expiry-row-${ids.eo77}").performClick()
         onNode(hasText("Arxivlash") and hasAnyAncestor(hasTestTag("expiry-actions"))).performClick()
         onNodeWithText("Partiyani arxivlash").assertExists()

@@ -16,6 +16,7 @@ import uz.reaktivombor.desktop.core.MeasureUnit
 import uz.reaktivombor.desktop.core.UserError
 import uz.reaktivombor.desktop.service.BatchFilter
 import uz.reaktivombor.desktop.service.NewBatch
+import uz.reaktivombor.desktop.service.PlaceKind
 import uz.reaktivombor.desktop.service.Services
 import uz.reaktivombor.desktop.ui.theme.Severity
 
@@ -77,7 +78,7 @@ class AppStateTest {
     fun successfulRunRefreshesAndCallsOnSuccess() {
         val tick = state.refreshTick
         var got: Long? = null
-        val ok = state.run({ services.reagents.archiveBatch(ids.eo77); 42L }) { got = it }
+        val ok = state.run({ services.directory.add(PlaceKind.DEPARTMENT, "Toksikologiya"); 42L }) { got = it }
         assertTrue(ok)
         assertEquals(42L, got)
         assertEquals(tick + 1, state.refreshTick)
@@ -98,7 +99,7 @@ class AppStateTest {
         assertTrue(message.text, message.text.contains("Reaktiv nomi kiritilishi shart."))
         assertFalse(state.busy)
         // Keyingi muvaffaqiyatli amal eski xato xabarini va maydon xatolarini olib tashlaydi.
-        assertTrue(state.run({ services.reagents.archiveBatch(ids.eo77) }, form = form))
+        assertTrue(state.run({ services.directory.add(PlaceKind.DEPARTMENT, "Kriminalistika") }, form = form))
         assertTrue(form.fields.isEmpty())
         assertTrue(state.messages.none { it.severity == Severity.ERROR })
     }
